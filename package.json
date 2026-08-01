@@ -1,0 +1,76 @@
+{
+  "name": "cedar-pg",
+  "version": "0.1.0",
+  "description": "Worktree-isolated local Postgres for Vite+/Nx/Cedar — powered by autopg",
+  "homepage": "https://github.com/simoncrypta/cedar-pg#readme",
+  "bugs": {
+    "url": "https://github.com/simoncrypta/cedar-pg/issues"
+  },
+  "license": "MIT",
+  "author": "Simon Crypta",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/simoncrypta/cedar-pg.git"
+  },
+  "bin": {
+    "cedar-pg": "./dist/cli.mjs"
+  },
+  "files": [
+    "dist",
+    "scripts"
+  ],
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    },
+    "./vite-plus": {
+      "types": "./dist/vite-plus.d.mts",
+      "import": "./dist/vite-plus.mjs",
+      "require": "./dist/vite-plus.cjs"
+    },
+    "./nx": {
+      "types": "./dist/nx.d.mts",
+      "import": "./dist/nx.mjs",
+      "require": "./dist/nx.cjs"
+    },
+    "./vitest": {
+      "types": "./dist/vitest.d.mts",
+      "import": "./dist/vitest.mjs",
+      "require": "./dist/vitest.cjs"
+    },
+    "./jest": {
+      "types": "./dist/jest.d.mts",
+      "import": "./dist/jest.mjs",
+      "require": "./dist/jest.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "vp pack",
+    "dev": "vp pack --watch",
+    "test": "vp test",
+    "check": "vp check",
+    "postinstall": "node scripts/postinstall.js",
+    "prepare": "vp config || true"
+  },
+  "dependencies": {
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/pg": "^8.15.4",
+    "typescript": "^5.8.3",
+    "vite-plus": "^0.2.4"
+  },
+  "overrides": {
+    "vite": "npm:@voidzero-dev/vite-plus-core@latest",
+    "vitest": "4.1.9"
+  },
+  "packageManager": "pnpm@11.18.0"
+}
