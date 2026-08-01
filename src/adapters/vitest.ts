@@ -1,4 +1,4 @@
-import { ensure } from "../core/lifecycle.ts";
+import { ensureIfNeeded } from "../core/lifecycle.ts";
 
 /**
  * Vitest globalSetup — ensure test DB, return teardown that disposes it.
@@ -13,21 +13,13 @@ import { ensure } from "../core/lifecycle.ts";
  * ```
  */
 export async function setup(): Promise<() => Promise<void>> {
-  if (process.env.CEDAR_PG === "0" || process.env.CEDAR_PG === "false") {
-    return async () => {};
-  }
-  // Honor explicit TEST_DATABASE_URL escape hatch
-  if (process.env.TEST_DATABASE_URL && process.env.CEDAR_PG_FORCE !== "1") {
-    process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
-    return async () => {};
-  }
-
-  const result = await ensure({
+  const result = await ensureIfNeeded({
     mode: "test",
-    disposeOnExit: false,
     setEnv: true,
   });
-
+  if (result.status !== "ensured") {
+    return async () => {};
+  }
   return async () => {
     await result.dispose();
   };

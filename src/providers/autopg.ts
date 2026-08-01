@@ -1,21 +1,23 @@
 import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import pg from "pg";
 
 export type AutopgDiscovery = {
   port: number;
-  socketDir: string | null;
   adminUrl: string;
   bin: string;
 };
 
-const INSTALL_HINT =
+export const INSTALL_HINT =
   "autopg is required. Install with:\n" +
   "  curl -fsSL https://raw.githubusercontent.com/automagik-dev/autopg/main/install.sh | bash\n" +
   "Then ensure ~/.local/bin is on PATH, or set AUTOPG_BIN.";
+
+/** Password scheme v1: sha256("cedar-pg\\0" + databaseName) hex[:32]. Frozen for URL rebuild. */
+export const ROLE_PASSWORD_SCHEME = "v1" as const;
 
 function candidateBins(): string[] {
   const out: string[] = [];
@@ -45,59 +47,55 @@ export function requireAutopgBin(): string {
   return bin;
 }
 
-function readAdminJson(): { port?: number; socketDir?: string } | null {
-  const configDir =
-    process.env.AUTOPG_CONFIG_DIR || process.env.PGSERVE_CONFIG_DIR || join(homedir(), ".autopg");
-  const file = join(configDir, "admin.json");
-  if (!existsSync(file)) return null;
+/**
+ * Parse `autopg status --json` output. Requires a numeric port and running !== false.
+ */
+export function parseHostStatus(json: string): { port: number } {
+  let parsed: { port?: unknown; running?: unknown };
   try {
-    return JSON.parse(readFileSync(file, "utf8")) as {
-      port?: number;
-      socketDir?: string;
-    };
+    parsed = JSON.parse(json) as { port?: unknown; running?: unknown };
   } catch {
-    return null;
+    throw new Error(`autopg status --json returned invalid JSON.\n${INSTALL_HINT}`);
   }
+  if (typeof parsed.port !== "number") {
+    throw new Error(`autopg status --json missing numeric port.\n${INSTALL_HINT}`);
+  }
+  if (parsed.running === false) {
+    throw new Error(`autopg host is not running.\n${INSTALL_HINT}`);
+  }
+  return { port: parsed.port };
+}
+
+function adminUrlFor(port: number): string {
+  return `postgresql://postgres:postgres@127.0.0.1:${port}/postgres`;
 }
 
 /**
- * Discover a live autopg host. Tries `autopg status --json`, then admin.json.
+ * Discover a live autopg host via `autopg status --json`. Throws if the host is not proven live.
  */
 export function discoverHost(bin = requireAutopgBin()): AutopgDiscovery {
-  let port = 5432;
-  let socketDir: string | null = null;
-
+  let status: string;
   try {
-    const status = execFileSync(bin, ["status", "--json"], {
+    status = execFileSync(bin, ["status", "--json"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const parsed = JSON.parse(status) as {
-      port?: number;
-      socketDir?: string;
-      running?: boolean;
-    };
-    if (typeof parsed.port === "number") port = parsed.port;
-    if (typeof parsed.socketDir === "string") socketDir = parsed.socketDir;
-  } catch {
-    const admin = readAdminJson();
-    if (admin?.port) port = admin.port;
-    if (admin?.socketDir) socketDir = admin.socketDir;
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(`Failed to query autopg status.\n${detail}\n${INSTALL_HINT}`);
   }
-
-  // Prefer TCP admin URL — works from Node without Unix socket quirks
-  const adminUrl = `postgresql://postgres:postgres@127.0.0.1:${port}/postgres`;
-  return { port, socketDir, adminUrl, bin };
+  const { port } = parseHostStatus(status);
+  return { port, adminUrl: adminUrlFor(port), bin };
 }
 
 /**
- * Ensure the host postmaster is up. Runs `autopg install` when status fails.
+ * Ensure the host postmaster is up. Runs `autopg install` only after status fails, then re-discovers.
  */
 export function ensureHostRunning(bin = requireAutopgBin()): AutopgDiscovery {
   try {
     return discoverHost(bin);
   } catch {
-    // fall through to install
+    // status failed — attempt install, then require a successful rediscovery
   }
 
   const install = spawnSync(bin, ["install"], {
@@ -105,7 +103,6 @@ export function ensureHostRunning(bin = requireAutopgBin()): AutopgDiscovery {
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (install.status !== 0) {
-    // Maybe binary exists but isn't the full CLI — try install.sh hint
     throw new Error(
       `Failed to start autopg host (exit ${install.status}).\n` +
         `${install.stderr || install.stdout || ""}\n${INSTALL_HINT}`,
@@ -164,7 +161,6 @@ export async function ensureDatabase(opts: {
         `CREATE DATABASE ${quoteIdent(opts.databaseName)} OWNER ${quoteIdent(opts.roleName)}`,
       );
     } else {
-      // Ensure ownership if DB already exists
       await client.query(
         `ALTER DATABASE ${quoteIdent(opts.databaseName)} OWNER TO ${quoteIdent(opts.roleName)}`,
       );
@@ -194,7 +190,6 @@ export async function dropDatabase(opts: {
       [opts.databaseName],
     );
     await client.query(`DROP DATABASE IF EXISTS ${quoteIdent(opts.databaseName)}`);
-    // Drop role only if it owns nothing else
     const owns = await client.query(
       `SELECT 1 FROM pg_database WHERE datdba = (SELECT oid FROM pg_roles WHERE rolname = $1) LIMIT 1`,
       [opts.roleName],
@@ -212,14 +207,9 @@ export function buildDatabaseUrl(opts: {
   databaseName: string;
   roleName: string;
   password?: string;
-  socketDir?: string | null;
 }): string {
-  // Prefer TCP with a deterministic password — Prisma and node-pg both handle
-  // this reliably. (Unix-socket URLs with empty authority break Prisma.)
   const password = opts.password ?? rolePasswordFor(opts.databaseName);
   const user = encodeURIComponent(opts.roleName);
   const pass = encodeURIComponent(password);
   return `postgresql://${user}:${pass}@127.0.0.1:${opts.port}/${opts.databaseName}`;
 }
-
-export { INSTALL_HINT };

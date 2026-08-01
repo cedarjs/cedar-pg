@@ -1,5 +1,5 @@
 /**
- * Thin Nx-oriented helpers. Wire as an executor or target command:
+ * Nx target command hints. Wire into project.json / package.json:
  *
  * ```json
  * {
@@ -12,38 +12,18 @@
  *   }
  * }
  * ```
+ *
+ * Prefer the CLI for ensure/dispose — there is no separate Nx runtime wrapper.
  */
 
-import { ensure, dispose, type EnsureOptions, type EnsureResult } from "../core/lifecycle.ts";
-
-export type NxEnsureContext = {
-  projectRoot?: string;
-  mode?: "dev" | "test";
-};
-
-/**
- * Nx-friendly ensure: uses project root from context when provided.
- */
-export async function nxEnsure(context: NxEnsureContext = {}): Promise<EnsureResult> {
-  const opts: EnsureOptions = {
-    root: context.projectRoot,
-    mode: context.mode ?? "dev",
-  };
-  return ensure(opts);
-}
-
-export async function nxDispose(context: NxEnsureContext = {}): Promise<void> {
-  await dispose({
-    root: context.projectRoot,
-    mode: context.mode ?? "test",
-  });
-}
+import { cedarPgCommands } from "./tasks.ts";
 
 /** Suggested target definitions for project.json / package.json nx targets. */
 export function nxTargetHints(bin = "cedar-pg"): Record<string, { command: string }> {
+  const cmds = cedarPgCommands(bin);
   return {
-    "db:ensure": { command: `${bin} ensure --mode=dev` },
-    "db:ensure-test": { command: `${bin} ensure --mode=test --print-env` },
-    "db:dispose-test": { command: `${bin} dispose --mode=test` },
+    "db:ensure": { command: cmds.ensureDev },
+    "db:ensure-test": { command: cmds.ensureTest },
+    "db:dispose-test": { command: cmds.disposeTest },
   };
 }

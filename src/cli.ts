@@ -1,10 +1,8 @@
 #!/usr/bin/env node
-import { ensure, dispose, gc } from "./core/lifecycle.ts";
+import { ensure, dispose, gc, urlFromLease } from "./core/lifecycle.ts";
 import { resolveWorktreeIdentity } from "./core/worktree.ts";
-import { buildDatabaseName } from "./core/naming.ts";
 import { readLease } from "./core/lease.ts";
 import type { DbMode } from "./core/naming.ts";
-import { buildDatabaseUrl, discoverHost } from "./providers/autopg.ts";
 
 function printHelp(): void {
   process.stdout.write(`cedar-pg — worktree-isolated local Postgres (via autopg)
@@ -12,7 +10,7 @@ function printHelp(): void {
 Usage:
   cedar-pg ensure --mode=dev|test [--root <path>] [--json] [--print-env]
   cedar-pg dispose [--mode=dev|test] [--root <path>]
-  cedar-pg gc [--root <path>] [--json]
+  cedar-pg gc [--json]
   cedar-pg print-url [--mode=dev|test] [--root <path>]
   cedar-pg --help
 
@@ -24,6 +22,11 @@ Env:
   AUTOPG_BIN     Path to autopg binary
   CEDAR_PG=0     Disable adapters that auto-ensure
 `);
+}
+
+function parseMode(value: string | undefined): DbMode {
+  if (value === "dev" || value === "test") return value;
+  throw new Error("--mode must be dev or test");
 }
 
 function parseArgs(argv: string[]) {
@@ -42,8 +45,8 @@ function parseArgs(argv: string[]) {
     if (a === "--help" || a === "-h") out.help = true;
     else if (a === "--json") out.json = true;
     else if (a === "--print-env") out.printEnv = true;
-    else if (a.startsWith("--mode=")) out.mode = a.slice(7) as DbMode;
-    else if (a === "--mode") out.mode = rest[++i] as DbMode;
+    else if (a.startsWith("--mode=")) out.mode = parseMode(a.slice(7));
+    else if (a === "--mode") out.mode = parseMode(rest[++i]);
     else if (a.startsWith("--root=")) out.root = a.slice(7);
     else if (a === "--root") out.root = rest[++i];
     else throw new Error(`unknown argument: ${a}`);
@@ -66,13 +69,9 @@ async function main(): Promise<number> {
   try {
     if (args.cmd === "ensure") {
       const mode = args.mode ?? "dev";
-      if (mode !== "dev" && mode !== "test") {
-        throw new Error("--mode must be dev or test");
-      }
       const result = await ensure({
         root: args.root,
         mode,
-        disposeOnExit: false,
         setEnv: true,
       });
       if (args.printEnv) {
@@ -110,13 +109,23 @@ async function main(): Promise<number> {
 
     if (args.cmd === "dispose") {
       const mode = args.mode ?? "test";
-      await dispose({ root: args.root, mode });
-      process.stdout.write(`cedar-pg: disposed ${mode}\n`);
-      return 0;
+      const result = await dispose({ root: args.root, mode });
+      if (result.dropped) {
+        process.stdout.write(`cedar-pg: disposed ${mode} (${result.databaseName})\n`);
+        return 0;
+      }
+      if (result.reason === "no-lease") {
+        process.stdout.write(`cedar-pg: nothing to dispose for ${mode} (no lease)\n`);
+        return 0;
+      }
+      process.stderr.write(
+        `cedar-pg: could not dispose ${mode} — autopg host unavailable (lease kept for retry)\n`,
+      );
+      return 1;
     }
 
     if (args.cmd === "gc") {
-      const result = await gc({ root: args.root });
+      const result = await gc();
       if (args.json) {
         process.stdout.write(`${JSON.stringify(result)}\n`);
       } else {
@@ -130,22 +139,13 @@ async function main(): Promise<number> {
       const mode = args.mode ?? "dev";
       const identity = resolveWorktreeIdentity(args.root);
       const lease = readLease(identity.root, mode);
-      const databaseName = lease?.databaseName ?? buildDatabaseName(identity, mode);
-      if (lease) {
-        const host = discoverHost();
-        const url = buildDatabaseUrl({
-          port: lease.port || host.port,
-          databaseName,
-          roleName: lease.roleName,
-          socketDir: host.socketDir,
-        });
-        process.stdout.write(`${url}\n`);
-      } else {
+      if (!lease) {
         process.stderr.write(
           `cedar-pg: no ${mode} lease — run \`cedar-pg ensure --mode=${mode}\` first\n`,
         );
         return 2;
       }
+      process.stdout.write(`${urlFromLease(lease)}\n`);
       return 0;
     }
 

@@ -29,6 +29,8 @@
  * ```
  */
 
+import { cedarPgCommands } from "./tasks.ts";
+
 export const CEDAR_PG_TASK_ENSURE_DEV = "db:ensure";
 export const CEDAR_PG_TASK_ENSURE_TEST = "db:ensure-test";
 export const CEDAR_PG_TASK_DISPOSE_TEST = "db:dispose-test";
@@ -49,20 +51,20 @@ export type CedarPgTasksOptions = {
  * Returns Vite+ `run.tasks` entries for cedar-pg lifecycle.
  */
 export function cedarPgTasks(options: CedarPgTasksOptions = {}): Record<string, CedarPgTaskDef> {
-  const bin = options.bin ?? "cedar-pg";
+  const cmds = cedarPgCommands(options.bin ?? "cedar-pg");
   const tasks: Record<string, CedarPgTaskDef> = {
     [CEDAR_PG_TASK_ENSURE_DEV]: {
-      command: `${bin} ensure --mode=dev`,
+      command: cmds.ensureDev,
       cache: false,
     },
     [CEDAR_PG_TASK_ENSURE_TEST]: {
-      command: `${bin} ensure --mode=test --print-env`,
+      command: cmds.ensureTest,
       cache: false,
     },
   };
   if (options.includeDisposeTest !== false) {
     tasks[CEDAR_PG_TASK_DISPOSE_TEST] = {
-      command: `${bin} dispose --mode=test`,
+      command: cmds.disposeTest,
       cache: false,
     };
   }

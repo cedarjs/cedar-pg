@@ -55,7 +55,7 @@ cedar-pg ensure --mode=dev
 cedar-pg ensure --mode=test --print-env
 cedar-pg dispose --mode=test
 cedar-pg print-url --mode=dev
-cedar-pg gc
+cedar-pg gc   # drop DBs whose worktree root is gone (uses ~/.cedar-pg/registry)
 ```
 
 ## Vite+ consumer adapter
@@ -96,10 +96,12 @@ await drop();
 
 ## Env
 
-| Var                           | Meaning                             |
-| ----------------------------- | ----------------------------------- |
-| `AUTOPG_BIN`                  | Path to autopg                      |
-| `CEDAR_PG=0`                  | Disable auto-ensure in adapters     |
-| `TEST_DATABASE_URL`           | Escape hatch — skip ensure when set |
-| `CEDAR_PG_SKIP_POSTINSTALL=1` | Skip autopg install hook            |
-| `CEDAR_PG_INSTALL_AUTOPG=1`   | Force autopg install in CI          |
+| Var                           | Meaning                                                             |
+| ----------------------------- | ------------------------------------------------------------------- |
+| `AUTOPG_BIN`                  | Path to autopg                                                      |
+| `CEDAR_PG=0`                  | Disable auto-ensure in adapters                                     |
+| `TEST_DATABASE_URL`           | Escape hatch — skip ensure for external DBs (not `cpg_*` / `file:`) |
+| `CEDAR_PG_FORCE=1`            | Ignore external-URL escape hatch                                    |
+| `CEDAR_PG_REGISTRY_DIR`       | Override global lease registry (for `gc`)                           |
+| `CEDAR_PG_SKIP_POSTINSTALL=1` | Skip autopg install hook                                            |
+| `CEDAR_PG_INSTALL_AUTOPG=1`   | Force autopg install in CI                                          |

@@ -93,7 +93,3 @@ export function resolveWorktreeIdentity(root?: string): WorktreeIdentity {
 
   return { root: absRoot, repoSlug, worktreeSlug, pathHash };
 }
-
-export function fingerprintFor(root: string, mode: string): string {
-  return createHash("sha256").update(`${root}\0${mode}`).digest("hex");
-}
