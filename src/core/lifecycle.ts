@@ -167,8 +167,14 @@ export async function dispose(options: DisposeOptions = {}): Promise<void> {
   const mode = options.mode ?? "test";
   const lease = readLease(identity.root, mode);
 
-  const databaseName = lease?.databaseName ?? buildDatabaseName(identity, mode);
-  const roleName = lease?.roleName ?? buildRoleName(databaseName);
+  // Only drop DBs we created — never invent a name and DROP without a lease
+  // (escape-hatch / external TEST_DATABASE_URL must stay untouched).
+  if (!lease) {
+    return;
+  }
+
+  const databaseName = lease.databaseName;
+  const roleName = lease.roleName;
 
   let host;
   try {

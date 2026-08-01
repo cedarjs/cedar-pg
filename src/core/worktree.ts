@@ -35,10 +35,12 @@ function sanitizeSlug(input: string): string {
 }
 
 /**
- * Resolve the project / worktree root. Prefer git toplevel; fall back to cwd.
+ * Resolve the project / worktree root.
+ * Explicit `root` wins (app project path). Otherwise prefer git toplevel, then cwd.
  */
 export function resolveRoot(root?: string): string {
-  const start = resolve(root ?? process.cwd());
+  if (root) return resolve(root);
+  const start = resolve(process.cwd());
   const toplevel = git(["rev-parse", "--show-toplevel"], start);
   if (toplevel) return toplevel;
   return start;

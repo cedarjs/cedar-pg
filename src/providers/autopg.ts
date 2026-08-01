@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -117,6 +118,18 @@ function quoteIdent(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
 
+function quoteLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+/**
+ * Deterministic local-only password for an app role (Prisma/TCP need it;
+ * autopg hba uses `password` for 127.0.0.1).
+ */
+export function rolePasswordFor(databaseName: string): string {
+  return createHash("sha256").update(`cedar-pg\0${databaseName}`).digest("hex").slice(0, 32);
+}
+
 /**
  * Idempotently CREATE ROLE + CREATE DATABASE with cedar-pg owned names.
  */
@@ -124,7 +137,9 @@ export async function ensureDatabase(opts: {
   adminUrl: string;
   databaseName: string;
   roleName: string;
+  password?: string;
 }): Promise<void> {
+  const password = opts.password ?? rolePasswordFor(opts.databaseName);
   const client = new pg.Client({ connectionString: opts.adminUrl });
   await client.connect();
   try {
@@ -132,7 +147,13 @@ export async function ensureDatabase(opts: {
       opts.roleName,
     ]);
     if (roleExists.rowCount === 0) {
-      await client.query(`CREATE ROLE ${quoteIdent(opts.roleName)} WITH LOGIN`);
+      await client.query(
+        `CREATE ROLE ${quoteIdent(opts.roleName)} WITH LOGIN PASSWORD ${quoteLiteral(password)}`,
+      );
+    } else {
+      await client.query(
+        `ALTER ROLE ${quoteIdent(opts.roleName)} WITH LOGIN PASSWORD ${quoteLiteral(password)}`,
+      );
     }
 
     const dbExists = await client.query("SELECT 1 FROM pg_database WHERE datname = $1", [
@@ -190,14 +211,15 @@ export function buildDatabaseUrl(opts: {
   port: number;
   databaseName: string;
   roleName: string;
+  password?: string;
   socketDir?: string | null;
 }): string {
-  // Trust/passwordless local: use role with empty password over TCP
-  // Matching autopg default postgres/postgres for admin; app role has LOGIN no password → use trust via socket when available
-  if (opts.socketDir) {
-    return `postgresql://${opts.roleName}@/${opts.databaseName}?host=${encodeURIComponent(opts.socketDir)}`;
-  }
-  return `postgresql://${opts.roleName}@127.0.0.1:${opts.port}/${opts.databaseName}`;
+  // Prefer TCP with a deterministic password — Prisma and node-pg both handle
+  // this reliably. (Unix-socket URLs with empty authority break Prisma.)
+  const password = opts.password ?? rolePasswordFor(opts.databaseName);
+  const user = encodeURIComponent(opts.roleName);
+  const pass = encodeURIComponent(password);
+  return `postgresql://${user}:${pass}@127.0.0.1:${opts.port}/${opts.databaseName}`;
 }
 
 export { INSTALL_HINT };
