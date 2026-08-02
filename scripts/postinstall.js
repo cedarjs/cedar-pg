@@ -3,6 +3,10 @@
  * Ensure the autopg host binary is available after cedar-pg install.
  * Idempotent across npm / yarn / pnpm. Never fails the parent install hard
  * when network is unavailable — prints a clear warning instead.
+ *
+ * Supply-chain: both the install script ref and the binary release are pinned.
+ * Bump AUTOPG_VERSION (and the matching tag in INSTALL_URL) deliberately when
+ * upgrading — do not track main/latest.
  */
 
 import { spawnSync } from "node:child_process";
@@ -10,7 +14,9 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const INSTALL_URL = "https://raw.githubusercontent.com/automagik-dev/autopg/main/install.sh";
+/** Pinned autopg release tag. Bump intentionally for upgrades. */
+const AUTOPG_VERSION = "v3.0.7";
+const INSTALL_URL = `https://raw.githubusercontent.com/automagik-dev/autopg/${AUTOPG_VERSION}/install.sh`;
 
 function hasAutopg() {
   if (process.env.AUTOPG_BIN && existsSync(process.env.AUTOPG_BIN)) return true;
@@ -37,16 +43,16 @@ function main() {
     return;
   }
 
-  console.log("[cedar-pg] autopg not found — installing via official install.sh…");
+  console.log(`[cedar-pg] autopg not found — installing ${AUTOPG_VERSION} via pinned install.sh…`);
   const result = spawnSync("bash", ["-c", `curl -fsSL ${INSTALL_URL} | bash`], {
     stdio: "inherit",
-    env: process.env,
+    env: { ...process.env, AUTOPG_VERSION },
   });
   if (result.status !== 0) {
     console.warn(
       "[cedar-pg] automatic autopg install failed.\n" +
         "  Install manually:\n" +
-        `  curl -fsSL ${INSTALL_URL} | bash\n` +
+        `  curl -fsSL ${INSTALL_URL} | AUTOPG_VERSION=${AUTOPG_VERSION} bash\n` +
         "  Then ensure ~/.local/bin is on PATH (or set AUTOPG_BIN).",
     );
   }

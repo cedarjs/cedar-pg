@@ -22,10 +22,12 @@ Examples:
 
 ## Prerequisites
 
-Host autopg singleton (installed automatically by `postinstall`, or manually):
+Host autopg singleton (installed automatically by `postinstall`, or manually).
+Both the install script and binary are pinned to a release tag (currently `v3.0.7`); bump the pin in `scripts/postinstall.js` to upgrade:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/automagik-dev/autopg/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/automagik-dev/autopg/v3.0.7/install.sh \
+  | AUTOPG_VERSION=v3.0.7 bash
 ```
 
 ## Develop this package (Vite+)
