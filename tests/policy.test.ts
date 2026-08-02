@@ -35,7 +35,7 @@ test("isCedarPgManagedUrl detects cpg database and role", () => {
   expect(isCedarPgManagedUrl(undefined)).toBe(false);
 });
 
-test("isExternalDatabaseEscapeHatch ignores file and cedar-pg urls", () => {
+test("isExternalDatabaseEscapeHatch ignores file and cedarpg urls", () => {
   expect(isExternalDatabaseEscapeHatch("postgresql://neon.tech/db")).toBe(true);
   expect(isExternalDatabaseEscapeHatch("file:./test.db")).toBe(false);
   expect(
@@ -74,7 +74,7 @@ test("resolveEnsureSkip honors real external url input", () => {
   );
 });
 
-test("resolveEnsureSkip does not treat stale cedar-pg URL as escape hatch", () => {
+test("resolveEnsureSkip does not treat stale cedarpg URL as escape hatch", () => {
   expect(
     resolveEnsureSkip({
       disabled: false,

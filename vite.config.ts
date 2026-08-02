@@ -20,7 +20,14 @@ export default defineConfig({
     exports: false,
   },
   run: {
-    tasks: {},
+    tasks: {
+      // package.json has `build`; task names must not duplicate — smoke depends on it.
+      smoke: {
+        command: "node scripts/smoke.mjs",
+        dependsOn: ["build"],
+        cache: false,
+      },
+    },
   },
   lint: {
     options: {

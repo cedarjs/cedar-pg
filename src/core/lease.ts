@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { STATE_DIRNAME } from "./constants.ts";
 import type { DbMode } from "./naming.ts";
 
 export type Lease = {
@@ -64,7 +65,7 @@ export function parseLease(raw: unknown): Lease | null {
 }
 
 export function leaseDir(root: string): string {
-  return join(root, ".cedar-pg");
+  return join(root, STATE_DIRNAME);
 }
 
 export function leasePath(root: string, mode: DbMode): string {
@@ -73,7 +74,7 @@ export function leasePath(root: string, mode: DbMode): string {
 
 /** Durable registry outside worktrees so GC can find orphans after a checkout is deleted. */
 export function registryDir(): string {
-  return process.env.CEDAR_PG_REGISTRY_DIR || join(homedir(), ".cedar-pg", "registry");
+  return process.env.CEDAR_PG_REGISTRY_DIR || join(homedir(), STATE_DIRNAME, "registry");
 }
 
 function registryPath(databaseName: string): string {

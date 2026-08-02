@@ -54,7 +54,7 @@ test("ensureIfNeeded skips external url and sets DATABASE_URL", async () => {
   );
 });
 
-test("ensureIfNeeded does not skip stale cedar-pg urls", async () => {
+test("ensureIfNeeded does not skip stale cedarpg urls", async () => {
   const stale =
     "postgresql://cpg_cedar_main_test_abcd1234_role:DEAD@127.0.0.1:25432/cpg_cedar_main_test_abcd1234";
   const skip = await ensureIfNeeded({

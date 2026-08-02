@@ -3,7 +3,7 @@ import { dispose, ensureIfNeeded } from "../core/lifecycle.ts";
 /**
  * Jest globalSetup — call from jest config:
  * ```js
- * globalSetup: require.resolve('cedar-pg/jest')
+ * globalSetup: require.resolve('@cedarjs/pg/jest')
  * ```
  * Pair with `teardown` from this module as globalTeardown.
  */

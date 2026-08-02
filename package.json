@@ -1,7 +1,19 @@
 {
   "name": "@cedarjs/pg",
-  "version": "0.1.0",
-  "description": "Worktree-isolated local Postgres for Vite+/Nx/Cedar. Powered by autopg",
+  "version": "0.1.0-alpha.0",
+  "description": "Worktree-isolated local Postgres for Vite+/Nx/CedarJS — powered by autopg (embedded PostgreSQL with true concurrent connections)",
+  "keywords": [
+    "autopg",
+    "cedar",
+    "cedarjs",
+    "nx",
+    "postgres",
+    "postgresql",
+    "testing",
+    "vite",
+    "vite-plus",
+    "worktree"
+  ],
   "homepage": "https://github.com/cedarjs/cedar-pg#readme",
   "bugs": {
     "url": "https://github.com/cedarjs/cedar-pg/issues"
@@ -13,11 +25,11 @@
     "url": "git+https://github.com/cedarjs/cedar-pg.git"
   },
   "bin": {
-    "cedar-pg": "./dist/cli.mjs"
+    "cedarpg": "./dist/cli.mjs"
   },
   "files": [
     "dist",
-    "scripts"
+    "scripts/postinstall.js"
   ],
   "type": "module",
   "main": "./dist/index.cjs",
@@ -51,11 +63,16 @@
     },
     "./package.json": "./package.json"
   },
+  "publishConfig": {
+    "access": "public",
+    "tag": "alpha"
+  },
   "scripts": {
     "build": "vp pack",
     "dev": "vp pack --watch",
     "test": "vp test",
     "check": "vp check",
+    "prepublishOnly": "vp pack",
     "postinstall": "node scripts/postinstall.js",
     "prepare": "vp config || true"
   },
@@ -72,11 +89,8 @@
     "vite": "npm:@voidzero-dev/vite-plus-core@latest",
     "vitest": "4.1.9"
   },
-  "packageManager": "pnpm@11.18.0",
   "engines": {
     "node": ">=24"
   },
-  "publishConfig": {
-    "access": "public"
-  }
+  "packageManager": "pnpm@11.18.0"
 }

@@ -41,8 +41,8 @@ test("parseLease rejects incomplete records", () => {
 });
 
 test("writeLease / readLease round-trip and register for gc", () => {
-  const registry = mkdtempSync(join(tmpdir(), "cedar-pg-reg-"));
-  const root = mkdtempSync(join(tmpdir(), "cedar-pg-wt-"));
+  const registry = mkdtempSync(join(tmpdir(), "cedarpg-reg-"));
+  const root = mkdtempSync(join(tmpdir(), "cedarpg-wt-"));
   const prev = process.env.CEDAR_PG_REGISTRY_DIR;
   process.env.CEDAR_PG_REGISTRY_DIR = registry;
   try {
@@ -68,17 +68,17 @@ test("writeLease / readLease round-trip and register for gc", () => {
 
 test("isOrphanLease is true when root is missing", () => {
   const lease = makeLease({
-    root: join(tmpdir(), "cedar-pg-missing-root-" + Date.now()),
+    root: join(tmpdir(), "cedarpg-missing-root-" + Date.now()),
     databaseName: "cpg_cedar_gone_test_deadbeef",
   });
   expect(isOrphanLease(lease)).toBe(true);
 });
 
 test("readLease returns null for corrupt files", () => {
-  const root = mkdtempSync(join(tmpdir(), "cedar-pg-bad-"));
+  const root = mkdtempSync(join(tmpdir(), "cedarpg-bad-"));
   try {
-    mkdirSync(join(root, ".cedar-pg"), { recursive: true });
-    writeFileSync(join(root, ".cedar-pg", "test.json"), "{not json");
+    mkdirSync(join(root, ".cedarpg"), { recursive: true });
+    writeFileSync(join(root, ".cedarpg", "test.json"), "{not json");
     expect(readLease(root, "test")).toBeNull();
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -86,8 +86,8 @@ test("readLease returns null for corrupt files", () => {
 });
 
 test("clearLease unregisters by peeked databaseName when full parse fails", () => {
-  const registry = mkdtempSync(join(tmpdir(), "cedar-pg-reg-"));
-  const root = mkdtempSync(join(tmpdir(), "cedar-pg-wt-"));
+  const registry = mkdtempSync(join(tmpdir(), "cedarpg-reg-"));
+  const root = mkdtempSync(join(tmpdir(), "cedarpg-wt-"));
   const prev = process.env.CEDAR_PG_REGISTRY_DIR;
   process.env.CEDAR_PG_REGISTRY_DIR = registry;
   try {
@@ -98,7 +98,7 @@ test("clearLease unregisters by peeked databaseName when full parse fails", () =
     writeLease(lease);
     // Corrupt schema so parseLease fails, but databaseName remains peekable
     writeFileSync(
-      join(root, ".cedar-pg", "test.json"),
+      join(root, ".cedarpg", "test.json"),
       JSON.stringify({ schemaVersion: 99, databaseName: lease.databaseName }),
     );
     expect(readLease(root, "test")).toBeNull();

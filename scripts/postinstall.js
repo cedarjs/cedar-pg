@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Ensure the autopg host binary is available after cedar-pg install.
+ * Ensure the autopg host binary is available after @cedarjs/pg install.
  * Idempotent across npm / yarn / pnpm. Never fails the parent install hard
  * when network is unavailable — prints a clear warning instead.
  *
@@ -37,20 +37,20 @@ function main() {
   // Skip in CI unless explicitly requested — CI images often bake autopg
   if (process.env.CI === "true" && process.env.CEDAR_PG_INSTALL_AUTOPG !== "1") {
     console.warn(
-      "[cedar-pg] autopg not found; CI detected — skip auto-install. " +
+      "[cedarpg] autopg not found; CI detected — skip auto-install. " +
         "Set CEDAR_PG_INSTALL_AUTOPG=1 or install autopg in the image.",
     );
     return;
   }
 
-  console.log(`[cedar-pg] autopg not found — installing ${AUTOPG_VERSION} via pinned install.sh…`);
+  console.log(`[cedarpg] autopg not found — installing ${AUTOPG_VERSION} via pinned install.sh…`);
   const result = spawnSync("bash", ["-c", `curl -fsSL ${INSTALL_URL} | bash`], {
     stdio: "inherit",
     env: { ...process.env, AUTOPG_VERSION },
   });
   if (result.status !== 0) {
     console.warn(
-      "[cedar-pg] automatic autopg install failed.\n" +
+      "[cedarpg] automatic autopg install failed.\n" +
         "  Install manually:\n" +
         `  curl -fsSL ${INSTALL_URL} | AUTOPG_VERSION=${AUTOPG_VERSION} bash\n` +
         "  Then ensure ~/.local/bin is on PATH (or set AUTOPG_BIN).",

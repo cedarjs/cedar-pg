@@ -13,6 +13,6 @@ test("cedarPgTasks exposes ensure tasks for Vite+ run.tasks", () => {
 });
 
 test("cedarPgTasks respects custom bin", () => {
-  const tasks = cedarPgTasks({ bin: "./bin/cedar-pg" });
-  expect(tasks[CEDAR_PG_TASK_ENSURE_DEV]?.command.startsWith("./bin/cedar-pg")).toBe(true);
+  const tasks = cedarPgTasks({ bin: "./bin/cedarpg" });
+  expect(tasks[CEDAR_PG_TASK_ENSURE_DEV]?.command.startsWith("./bin/cedarpg")).toBe(true);
 });

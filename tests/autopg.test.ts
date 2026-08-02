@@ -15,11 +15,14 @@ test("parseHostStatus requires numeric port", () => {
 
 test("rolePasswordFor is stable for password scheme v1", () => {
   expect(ROLE_PASSWORD_SCHEME).toBe("v1");
-  const a = rolePasswordFor("cpg_cedar_main_dev_abcd1234");
-  const b = rolePasswordFor("cpg_cedar_main_dev_abcd1234");
+  const db = "cpg_cedar_main_dev_abcd1234";
+  const a = rolePasswordFor(db);
+  const b = rolePasswordFor(db);
   expect(a).toBe(b);
   expect(a).toMatch(/^[a-f0-9]{32}$/);
   expect(rolePasswordFor("other")).not.toBe(a);
+  // Golden digest — salt prefix is frozen; bump ROLE_PASSWORD_SCHEME if it changes.
+  expect(a).toBe("9c7ae5fd9d2dcd1c041d6aa8a6ad9fc4");
 });
 
 test("buildDatabaseUrl is TCP with encoded role password", () => {

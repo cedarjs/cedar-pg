@@ -2,12 +2,12 @@
  * Consumer adapter for external Vite+ projects.
  *
  * Merge into `vite.config.ts` `run.tasks` so `vp run test` / `vp run dev`
- * depend on cedar-pg ensure.
+ * depend on cedarpg ensure.
  *
  * @example
  * ```ts
  * import { defineConfig } from 'vite-plus'
- * import { cedarPgTasks } from 'cedar-pg/vite-plus'
+ * import { cedarPgTasks } from '@cedarjs/pg/vite-plus'
  *
  * export default defineConfig({
  *   run: {
@@ -29,6 +29,7 @@
  * ```
  */
 
+import { CLI_NAME } from "../core/constants.ts";
 import { cedarPgCommands } from "./tasks.ts";
 
 export const CEDAR_PG_TASK_ENSURE_DEV = "db:ensure";
@@ -41,7 +42,7 @@ export type CedarPgTaskDef = {
 };
 
 export type CedarPgTasksOptions = {
-  /** Binary name / path (default: `cedar-pg`). */
+  /** Binary name / path (default: CLI_NAME / `cedarpg`). */
   bin?: string;
   /** Include dispose-test task (default: true). */
   includeDisposeTest?: boolean;
@@ -51,7 +52,7 @@ export type CedarPgTasksOptions = {
  * Returns Vite+ `run.tasks` entries for cedar-pg lifecycle.
  */
 export function cedarPgTasks(options: CedarPgTasksOptions = {}): Record<string, CedarPgTaskDef> {
-  const cmds = cedarPgCommands(options.bin ?? "cedar-pg");
+  const cmds = cedarPgCommands(options.bin ?? CLI_NAME);
   const tasks: Record<string, CedarPgTaskDef> = {
     [CEDAR_PG_TASK_ENSURE_DEV]: {
       command: cmds.ensureDev,

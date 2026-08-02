@@ -19,4 +19,4 @@ jobs:
 
       - run: vp check
       - run: vp test
-      - run: vp run build
+      - run: vp run smoke

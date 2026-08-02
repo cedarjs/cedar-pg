@@ -1,18 +1,19 @@
 #!/usr/bin/env node
+import { CLI_NAME } from "./core/constants.ts";
 import { ensure, dispose, gc, urlFromLease } from "./core/lifecycle.ts";
 import { resolveWorktreeIdentity } from "./core/worktree.ts";
 import { readLease } from "./core/lease.ts";
 import type { DbMode } from "./core/naming.ts";
 
 function printHelp(): void {
-  process.stdout.write(`cedar-pg — worktree-isolated local Postgres (via autopg)
+  process.stdout.write(`${CLI_NAME} — worktree-isolated local Postgres (via autopg)
 
 Usage:
-  cedar-pg ensure --mode=dev|test [--root <path>] [--json] [--print-env]
-  cedar-pg dispose [--mode=dev|test] [--root <path>]
-  cedar-pg gc [--json]
-  cedar-pg print-url [--mode=dev|test] [--root <path>]
-  cedar-pg --help
+  ${CLI_NAME} ensure --mode=dev|test [--root <path>] [--json] [--print-env]
+  ${CLI_NAME} dispose [--mode=dev|test] [--root <path>]
+  ${CLI_NAME} gc [--json]
+  ${CLI_NAME} print-url [--mode=dev|test] [--root <path>]
+  ${CLI_NAME} --help
 
 Modes:
   dev   Keep DB across restarts (default for ensure if omitted: dev)
@@ -100,7 +101,7 @@ async function main(): Promise<number> {
         );
       } else if (!args.printEnv) {
         process.stdout.write(
-          `cedar-pg: ${result.databaseName} (${result.repoSlug}/${result.worktreeSlug} ${result.mode})\n`,
+          `${CLI_NAME}: ${result.databaseName} (${result.repoSlug}/${result.worktreeSlug} ${result.mode})\n`,
         );
         process.stdout.write(`${result.databaseUrl}\n`);
       }
@@ -111,15 +112,15 @@ async function main(): Promise<number> {
       const mode = args.mode ?? "test";
       const result = await dispose({ root: args.root, mode });
       if (result.dropped) {
-        process.stdout.write(`cedar-pg: disposed ${mode} (${result.databaseName})\n`);
+        process.stdout.write(`${CLI_NAME}: disposed ${mode} (${result.databaseName})\n`);
         return 0;
       }
       if (result.reason === "no-lease") {
-        process.stdout.write(`cedar-pg: nothing to dispose for ${mode} (no lease)\n`);
+        process.stdout.write(`${CLI_NAME}: nothing to dispose for ${mode} (no lease)\n`);
         return 0;
       }
       process.stderr.write(
-        `cedar-pg: could not dispose ${mode} — autopg host unavailable (lease kept for retry)\n`,
+        `${CLI_NAME}: could not dispose ${mode} — autopg host unavailable (lease kept for retry)\n`,
       );
       return 1;
     }
@@ -129,7 +130,7 @@ async function main(): Promise<number> {
       if (args.json) {
         process.stdout.write(`${JSON.stringify(result)}\n`);
       } else {
-        process.stdout.write(`cedar-pg gc: dropped ${result.dropped.length} database(s)\n`);
+        process.stdout.write(`${CLI_NAME} gc: dropped ${result.dropped.length} database(s)\n`);
         for (const name of result.dropped) process.stdout.write(`  ${name}\n`);
       }
       return 0;
@@ -141,7 +142,7 @@ async function main(): Promise<number> {
       const lease = readLease(identity.root, mode);
       if (!lease) {
         process.stderr.write(
-          `cedar-pg: no ${mode} lease — run \`cedar-pg ensure --mode=${mode}\` first\n`,
+          `${CLI_NAME}: no ${mode} lease — run \`${CLI_NAME} ensure --mode=${mode}\` first\n`,
         );
         return 2;
       }
@@ -149,12 +150,12 @@ async function main(): Promise<number> {
       return 0;
     }
 
-    process.stderr.write(`cedar-pg: unknown command ${args.cmd}\n`);
+    process.stderr.write(`${CLI_NAME}: unknown command ${args.cmd}\n`);
     printHelp();
     return 64;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`cedar-pg: ${message}\n`);
+    process.stderr.write(`${CLI_NAME}: ${message}\n`);
     return 1;
   }
 }
@@ -165,6 +166,6 @@ main()
   })
   .catch((err: unknown) => {
     const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`cedar-pg: ${message}\n`);
+    process.stderr.write(`${CLI_NAME}: ${message}\n`);
     process.exit(1);
   });

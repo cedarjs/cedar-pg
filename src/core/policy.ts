@@ -20,7 +20,7 @@ export type ResolveEnsureSkipInput = {
 };
 
 /**
- * True when the URL looks like a cedar-pg provisioned database (`cpg_*` name/role).
+ * True when the URL looks like a cedarpg provisioned database (`cpg_*` name/role).
  * These must never be treated as an external escape hatch — always re-ensure so
  * disposed/stale shell env cannot skip provisioning.
  */
@@ -40,7 +40,7 @@ export function isCedarPgManagedUrl(url: string | undefined): boolean {
 
 /**
  * True when `url` is a real external database and ensure should be skipped.
- * Sqlite `file:` URLs and cedar-pg `cpg_*` URLs are not external.
+ * Sqlite `file:` URLs and cedarpg `cpg_*` URLs are not external.
  */
 export function isExternalDatabaseEscapeHatch(url: string | undefined): boolean {
   if (!url) return false;

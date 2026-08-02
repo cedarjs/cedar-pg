@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import pg from "pg";
+import { PASSWORD_SALT_PREFIX } from "../core/constants.ts";
 
 export type AutopgDiscovery = {
   port: number;
@@ -16,7 +17,7 @@ export const INSTALL_HINT =
   "  curl -fsSL https://raw.githubusercontent.com/automagik-dev/autopg/main/install.sh | bash\n" +
   "Then ensure ~/.local/bin is on PATH, or set AUTOPG_BIN.";
 
-/** Password scheme v1: sha256("cedar-pg\\0" + databaseName) hex[:32]. Frozen for URL rebuild. */
+/** Password scheme v1: sha256(PASSWORD_SALT_PREFIX + "\\0" + databaseName) hex[:32]. Frozen for URL rebuild. */
 export const ROLE_PASSWORD_SCHEME = "v1" as const;
 
 function candidateBins(): string[] {
@@ -124,7 +125,10 @@ function quoteLiteral(value: string): string {
  * autopg hba uses `password` for 127.0.0.1).
  */
 export function rolePasswordFor(databaseName: string): string {
-  return createHash("sha256").update(`cedar-pg\0${databaseName}`).digest("hex").slice(0, 32);
+  return createHash("sha256")
+    .update(`${PASSWORD_SALT_PREFIX}\0${databaseName}`)
+    .digest("hex")
+    .slice(0, 32);
 }
 
 /**

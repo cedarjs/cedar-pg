@@ -7,7 +7,7 @@ import { ensureIfNeeded } from "../core/lifecycle.ts";
  * ```ts
  * export default defineConfig({
  *   test: {
- *     globalSetup: ['cedar-pg/vitest'],
+ *     globalSetup: ['@cedarjs/pg/vitest'],
  *   },
  * })
  * ```

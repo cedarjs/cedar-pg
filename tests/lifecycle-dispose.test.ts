@@ -20,7 +20,7 @@ function makeLease(partial: Partial<Lease> & Pick<Lease, "root" | "databaseName"
 }
 
 test("dispose is a no-op without a lease (never invents a DROP target)", async () => {
-  const root = mkdtempSync(join(tmpdir(), "cedar-pg-wt-"));
+  const root = mkdtempSync(join(tmpdir(), "cedarpg-wt-"));
   try {
     const { dispose } = await import("../src/core/lifecycle.ts");
     await expect(dispose({ root, mode: "test" })).resolves.toEqual({
@@ -33,8 +33,8 @@ test("dispose is a no-op without a lease (never invents a DROP target)", async (
 });
 
 test("dispose leaves lease+registry when host is unavailable", async () => {
-  const registry = mkdtempSync(join(tmpdir(), "cedar-pg-reg-"));
-  const root = mkdtempSync(join(tmpdir(), "cedar-pg-wt-"));
+  const registry = mkdtempSync(join(tmpdir(), "cedarpg-reg-"));
+  const root = mkdtempSync(join(tmpdir(), "cedarpg-wt-"));
   const prev = process.env.CEDAR_PG_REGISTRY_DIR;
   process.env.CEDAR_PG_REGISTRY_DIR = registry;
 
