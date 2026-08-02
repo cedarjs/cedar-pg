@@ -72,5 +72,12 @@
     "vite": "npm:@voidzero-dev/vite-plus-core@latest",
     "vitest": "4.1.9"
   },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "24.18.1",
+      "onFail": "download"
+    }
+  },
   "packageManager": "pnpm@11.18.0"
 }
