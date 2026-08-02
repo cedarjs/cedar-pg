@@ -1,16 +1,16 @@
 {
-  "name": "cedar-pg",
+  "name": "@cedarjs/pg",
   "version": "0.1.0",
-  "description": "Worktree-isolated local Postgres for Vite+/Nx/Cedar — powered by autopg",
-  "homepage": "https://github.com/simoncrypta/cedar-pg#readme",
+  "description": "Worktree-isolated local Postgres for Vite+/Nx/Cedar. Powered by autopg",
+  "homepage": "https://github.com/cedarjs/cedar-pg#readme",
   "bugs": {
-    "url": "https://github.com/simoncrypta/cedar-pg/issues"
+    "url": "https://github.com/cedarjs/cedar-pg/issues"
   },
   "license": "MIT",
   "author": "Simon Crypta",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/simoncrypta/cedar-pg.git"
+    "url": "git+https://github.com/cedarjs/cedar-pg.git"
   },
   "bin": {
     "cedar-pg": "./dist/cli.mjs"
@@ -72,5 +72,11 @@
     "vite": "npm:@voidzero-dev/vite-plus-core@latest",
     "vitest": "4.1.9"
   },
-  "packageManager": "pnpm@11.18.0"
+  "packageManager": "pnpm@11.18.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }
