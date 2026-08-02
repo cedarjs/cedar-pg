@@ -38,6 +38,7 @@ jobs:
           node-version-file: .node-version
           registry-url: https://registry.npmjs.org
           scope: "@cedarjs"
+          package-manager-cache: false
 
       - name: Publish to npm
         run: |
