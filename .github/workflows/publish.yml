@@ -1,10 +1,10 @@
 name: Publish
 
-# Publishes @cedarjs/pg to npm. Not run automatically on push —
+# Publishes @cedarjs/pg to npm. Not run automatically on push;
 # trigger via GitHub Release or workflow_dispatch when ready.
 #
 # Auth: npm Trusted Publisher (OIDC). Configure the GitHub Actions
-# publisher for @cedarjs/pg on npmjs.com — do not set NPM_TOKEN.
+# publisher for @cedarjs/pg on npmjs.com. Do not set NPM_TOKEN.
 on:
   release:
     types: [published]

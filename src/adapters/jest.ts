@@ -1,7 +1,7 @@
 import { dispose, ensureIfNeeded } from "../core/lifecycle.ts";
 
 /**
- * Jest globalSetup — call from jest config:
+ * Jest globalSetup. Call from jest config:
  * ```js
  * globalSetup: require.resolve('@cedarjs/pg/jest')
  * ```
@@ -14,7 +14,7 @@ export default async function globalSetup(): Promise<void> {
   });
 }
 
-/** Lease-gated dispose — no skip re-check (env may flip mid-suite). */
+/** Lease-gated dispose; no skip re-check (env may flip mid-suite). */
 export async function teardown(): Promise<void> {
   await dispose({ mode: "test" });
 }

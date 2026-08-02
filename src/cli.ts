@@ -6,7 +6,7 @@ import { readLease } from "./core/lease.ts";
 import type { DbMode } from "./core/naming.ts";
 
 function printHelp(): void {
-  process.stdout.write(`${CLI_NAME} — worktree-isolated local Postgres (via autopg)
+  process.stdout.write(`${CLI_NAME}: worktree-isolated local Postgres (via autopg)
 
 Usage:
   ${CLI_NAME} ensure --mode=dev|test [--root <path>] [--json] [--print-env]
@@ -120,7 +120,7 @@ async function main(): Promise<number> {
         return 0;
       }
       process.stderr.write(
-        `${CLI_NAME}: could not dispose ${mode} — autopg host unavailable (lease kept for retry)\n`,
+        `${CLI_NAME}: could not dispose ${mode}: autopg host unavailable (lease kept for retry)\n`,
       );
       return 1;
     }
@@ -142,7 +142,7 @@ async function main(): Promise<number> {
       const lease = readLease(identity.root, mode);
       if (!lease) {
         process.stderr.write(
-          `${CLI_NAME}: no ${mode} lease — run \`${CLI_NAME} ensure --mode=${mode}\` first\n`,
+          `${CLI_NAME}: no ${mode} lease; run \`${CLI_NAME} ensure --mode=${mode}\` first\n`,
         );
         return 2;
       }

@@ -1,6 +1,6 @@
 # cedar-pg
 
-Worktree-isolated local Postgres for **Vite+**, **Nx**, and **CedarJS** — powered by [autopg](https://github.com/automagik-dev/autopg).
+Worktree-isolated local Postgres for **Vite+**, **Nx**, and **CedarJS**, powered by [autopg](https://github.com/automagik-dev/autopg).
 
 Published on npm as **`@cedarjs/pg`**.
 
@@ -8,7 +8,7 @@ Published on npm as **`@cedarjs/pg`**.
 
 ## What you get (via autopg)
 
-Under the hood you get an **embedded PostgreSQL server with true concurrent connections** — native PostgreSQL 18 (not WASM), real process forking, no connection locks. It just works: **no credentials needed**, **zero config**, and **auto-provisioned databases** on first use. Any client works (`psql`, `node-postgres`, Prisma, Drizzle, TypeORM).
+autopg runs embedded PostgreSQL 18 (not WASM) with real concurrent connections. No credentials, zero config, and databases are provisioned on first use. Any client works (`psql`, `node-postgres`, Prisma, Drizzle, TypeORM).
 
 ### Development & testing
 
@@ -21,7 +21,7 @@ Under the hood you get an **embedded PostgreSQL server with true concurrent conn
 
 ## What cedar-pg adds
 
-**cedar-pg** sits on that autopg host and gives each **git worktree** its own database + role, with readable names, leases, and teardown — so parallel checkouts don’t fight over one shared DB:
+**cedar-pg** gives each **git worktree** its own database and role on that autopg host (readable names, leases, teardown) so parallel checkouts do not share one DB:
 
 - **1 database per git worktree** (visible in `\l` as `cpg_…`)
 - **dev** DBs persist across restarts; **test** DBs drop on dispose
@@ -30,7 +30,7 @@ Under the hood you get an **embedded PostgreSQL server with true concurrent conn
 
 | Layer        | Responsibility                                                      |
 | ------------ | ------------------------------------------------------------------- |
-| **autopg**   | Embedded Postgres host — concurrent, zero-config, auto-provision    |
+| **autopg**   | Embedded Postgres host (concurrent, zero-config, auto-provision)    |
 | **cedar-pg** | Per-worktree `CREATE DATABASE` / role, `DATABASE_URL`, dispose + GC |
 
 ## Install
@@ -135,19 +135,19 @@ await drop();
 
 ## Env
 
-| Var                           | Meaning                                                             |
-| ----------------------------- | ------------------------------------------------------------------- |
-| `AUTOPG_BIN`                  | Path to autopg                                                      |
-| `CEDAR_PG=0`                  | Disable auto-ensure in adapters                                     |
-| `TEST_DATABASE_URL`           | Escape hatch — skip ensure for external DBs (not `cpg_*` / `file:`) |
-| `CEDAR_PG_FORCE=1`            | Ignore external-URL escape hatch                                    |
-| `CEDAR_PG_REGISTRY_DIR`       | Override global lease registry (for `gc`)                           |
-| `CEDAR_PG_SKIP_POSTINSTALL=1` | Skip autopg install hook                                            |
-| `CEDAR_PG_INSTALL_AUTOPG=1`   | Force autopg install in CI                                          |
+| Var                           | Meaning                                                            |
+| ----------------------------- | ------------------------------------------------------------------ |
+| `AUTOPG_BIN`                  | Path to autopg                                                     |
+| `CEDAR_PG=0`                  | Disable auto-ensure in adapters                                    |
+| `TEST_DATABASE_URL`           | Escape hatch: skip ensure for external DBs (not `cpg_*` / `file:`) |
+| `CEDAR_PG_FORCE=1`            | Ignore external-URL escape hatch                                   |
+| `CEDAR_PG_REGISTRY_DIR`       | Override global lease registry (for `gc`)                          |
+| `CEDAR_PG_SKIP_POSTINSTALL=1` | Skip autopg install hook                                           |
+| `CEDAR_PG_INSTALL_AUTOPG=1`   | Force autopg install in CI                                         |
 
 ## Alpha caveats
 
 - Public API may change before `0.1.0`.
 - End-to-end Postgres flows assume a working local `autopg` host; CI unit tests do not start Postgres.
-- State lives in product-owned `.cedarpg` (worktree + `~/.cedarpg/registry`) — not under autopg's `~/.autopg/`, not a generic `.pg`.
+- State lives in product-owned `.cedarpg` (worktree + `~/.cedarpg/registry`), not under autopg's `~/.autopg/` or a generic `.pg`.
 - Password salt (`cedar-pg\\0`, scheme v1) is an opaque crypto constant; bump the scheme id to change it.

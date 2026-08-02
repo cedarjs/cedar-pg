@@ -13,11 +13,11 @@ Initial alpha of **cedar-pg**, published on npm as `@cedarjs/pg` (CLI: `cedarpg`
 
 ### Known limitations
 
-- Alpha — APIs may change
+- Alpha: APIs may change
 - No Windows-first support claims in this alpha
 
 ### Contracts
 
 - CLI binary: `cedarpg`; npm: `@cedarjs/pg`
 - State dirs: `.cedarpg` (worktree) and `~/.cedarpg/registry` (product-owned; not under `~/.autopg/`)
-- Password salt: opaque `cedar-pg\\0` (scheme v1) — bump scheme id to change
+- Password salt: opaque `cedar-pg\\0` (scheme v1); bump scheme id to change

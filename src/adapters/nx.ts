@@ -13,7 +13,7 @@
  * }
  * ```
  *
- * Prefer the CLI (`cedarpg` from `@cedarjs/pg`) for ensure/dispose —
+ * Prefer the CLI (`cedarpg` from `@cedarjs/pg`) for ensure/dispose;
  * there is no separate Nx runtime wrapper.
  */
 

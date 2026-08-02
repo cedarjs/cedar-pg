@@ -1,7 +1,7 @@
 /**
  * Product identity vs frozen crypto.
  *
- * State dirs follow the CLI name (`.cedarpg`) — product-owned, not nested under
+ * State dirs follow the CLI name (`.cedarpg`): product-owned, not nested under
  * autopg's `~/.autopg/` (host owns that) and not a generic `.pg` (collision-prone).
  * Password salt is an opaque crypto constant; bump ROLE_PASSWORD_SCHEME to change it.
  */
@@ -17,6 +17,6 @@ export const STATE_DIRNAME = ".cedarpg";
 
 /**
  * Password scheme v1 salt prefix: sha256(`${PASSWORD_SALT_PREFIX}\0` + databaseName).
- * Opaque — independent of STATE_DIRNAME / CLI_NAME. Bump ROLE_PASSWORD_SCHEME to change.
+ * Opaque; independent of STATE_DIRNAME / CLI_NAME. Bump ROLE_PASSWORD_SCHEME to change.
  */
 export const PASSWORD_SALT_PREFIX = "cedar-pg";

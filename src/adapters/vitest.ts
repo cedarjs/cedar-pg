@@ -1,7 +1,7 @@
 import { ensureIfNeeded } from "../core/lifecycle.ts";
 
 /**
- * Vitest globalSetup — ensure test DB, return teardown that disposes it.
+ * Vitest globalSetup: ensure test DB, return teardown that disposes it.
  *
  * vitest.config.ts:
  * ```ts

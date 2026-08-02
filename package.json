@@ -1,7 +1,7 @@
 {
   "name": "@cedarjs/pg",
   "version": "0.1.0-alpha.0",
-  "description": "Worktree-isolated local Postgres for Vite+/Nx/CedarJS — powered by autopg (embedded PostgreSQL with true concurrent connections)",
+  "description": "Worktree-isolated local Postgres for Vite+, Nx, and CedarJS (via autopg)",
   "keywords": [
     "autopg",
     "cedar",

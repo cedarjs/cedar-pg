@@ -2,11 +2,11 @@
 /**
  * Ensure the autopg host binary is available after @cedarjs/pg install.
  * Idempotent across npm / yarn / pnpm. Never fails the parent install hard
- * when network is unavailable — prints a clear warning instead.
+ * when network is unavailable; prints a clear warning instead.
  *
  * Supply-chain: both the install script ref and the binary release are pinned.
  * Bump AUTOPG_VERSION (and the matching tag in INSTALL_URL) deliberately when
- * upgrading — do not track main/latest.
+ * upgrading; do not track main/latest.
  */
 
 import { spawnSync } from "node:child_process";
@@ -34,16 +34,16 @@ function main() {
     return;
   }
 
-  // Skip in CI unless explicitly requested — CI images often bake autopg
+  // Skip in CI unless explicitly requested; CI images often bake autopg
   if (process.env.CI === "true" && process.env.CEDAR_PG_INSTALL_AUTOPG !== "1") {
     console.warn(
-      "[cedarpg] autopg not found; CI detected — skip auto-install. " +
+      "[cedarpg] autopg not found; CI detected, skip auto-install. " +
         "Set CEDAR_PG_INSTALL_AUTOPG=1 or install autopg in the image.",
     );
     return;
   }
 
-  console.log(`[cedarpg] autopg not found — installing ${AUTOPG_VERSION} via pinned install.sh…`);
+  console.log(`[cedarpg] autopg not found; installing ${AUTOPG_VERSION} via pinned install.sh...`);
   const result = spawnSync("bash", ["-c", `curl -fsSL ${INSTALL_URL} | bash`], {
     stdio: "inherit",
     env: { ...process.env, AUTOPG_VERSION },
