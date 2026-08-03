@@ -12,12 +12,8 @@ import {
 } from "./lease.ts";
 import { resolveEnsureSkip, type ResolveEnsureSkipInput } from "./policy.ts";
 import { resolveWorktreeIdentity } from "./worktree.ts";
-import {
-  buildDatabaseUrl,
-  dropDatabase,
-  ensureDatabase,
-  ensureHostRunning,
-} from "../providers/autopg.ts";
+import { buildDatabaseUrl, dropDatabase, ensureDatabase } from "../providers/autopg.ts";
+import { ensureHostRunning } from "../providers/host.ts";
 
 function writeEnvFile(root: string, mode: DbMode, databaseUrl: string): void {
   const dir = leaseDir(root);

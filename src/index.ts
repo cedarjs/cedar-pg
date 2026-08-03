@@ -28,7 +28,6 @@ export type { EnsureSkip, ResolveEnsureSkipInput } from "./core/policy.ts";
 export {
   resolveAutopgBin,
   requireAutopgBin,
-  ensureHostRunning,
   discoverHost,
   parseHostStatus,
   buildDatabaseUrl,
@@ -36,4 +35,5 @@ export {
   ROLE_PASSWORD_SCHEME,
   INSTALL_HINT,
 } from "./providers/autopg.ts";
+export { ensureHostRunning } from "./providers/host.ts";
 export type { AutopgDiscovery } from "./providers/autopg.ts";
