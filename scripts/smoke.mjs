@@ -75,8 +75,16 @@ run(
     "--input-type=module",
     "-e",
     `
-import { buildDatabaseName } from '${PACKAGE_NAME}';
+import {
+  buildDatabaseName,
+  loadTestEnv,
+  STATE_DIRNAME,
+} from '${PACKAGE_NAME}';
 import { cedarPgTasks } from '${PACKAGE_NAME}/vite-plus';
+import vitestSetup from '${PACKAGE_NAME}/vitest';
+import jestSetup from '${PACKAGE_NAME}/jest';
+import jestTeardown from '${PACKAGE_NAME}/jest-teardown';
+import '${PACKAGE_NAME}/test-env';
 const name = buildDatabaseName(
   { root: '/tmp/x', repoSlug: 'cedar', worktreeSlug: 'feat', pathHash: 'abcd1234' },
   'dev',
@@ -84,7 +92,12 @@ const name = buildDatabaseName(
 if (name !== 'cpg_cedar_feat_dev_abcd1234') throw new Error('bad name ' + name);
 const tasks = cedarPgTasks();
 if (!tasks['db:ensure']) throw new Error('missing db:ensure');
-console.log('ok', name, Object.keys(tasks).join(','));
+if (typeof vitestSetup !== 'function') throw new Error('vitest setup export missing');
+if (typeof jestSetup !== 'function') throw new Error('jest setup export missing');
+if (typeof jestTeardown !== 'function') throw new Error('jest-teardown export missing');
+if (typeof loadTestEnv !== 'function') throw new Error('loadTestEnv export missing');
+if (STATE_DIRNAME !== '.cedarpg') throw new Error('bad STATE_DIRNAME ' + STATE_DIRNAME);
+console.log('ok', name, STATE_DIRNAME, Object.keys(tasks).join(','));
 `,
   ],
   { cwd: tmp },

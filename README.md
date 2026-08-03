@@ -72,8 +72,9 @@ Typical flow: `autopg daemon` (or your usual host install) once per machine → 
 vp install
 vp check
 vp test
-vp pack          # → dist/ (dts + esm + cjs)
-vp run smoke     # build → npm-pack tarball → install + resolve exports
+vp pack            # → dist/ (dts + esm + cjs)
+vp run smoke       # build → npm-pack tarball → install + resolve exports
+vp run smoke:pg    # pack → Vitest + Jest adapters against real ephemeral Postgres
 ```
 
 ## Local consume (without npm)
@@ -123,10 +124,65 @@ export default defineConfig({
 });
 ```
 
+## Vitest / Jest adapters
+
+```ts
+// vitest.config.ts
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  test: {
+    globalSetup: ["@cedarjs/pg/vitest"],
+  },
+});
+```
+
+```js
+// jest.config.cjs — standalone apps
+module.exports = {
+  globalSetup: require.resolve("@cedarjs/pg/jest"),
+  globalTeardown: require.resolve("@cedarjs/pg/jest-teardown"),
+  // Jest globalSetup is a separate process — workers load DATABASE_URL from .cedarpg/test.env
+  setupFiles: [require.resolve("@cedarjs/pg/test-env")],
+};
+```
+
+### Framework hosts (CedarJS, custom globalSetup)
+
+If your runner already owns `globalSetup` (e.g. Prisma push/migrate after ensure), **do not** replace it with `@cedarjs/pg/jest`. Compose instead:
+
+1. In your `globalSetup`: call `ensureIfNeeded` when opted in, then run migrations.
+2. Add `setupFiles: [require.resolve('@cedarjs/pg/test-env')]` so Jest **workers** see `DATABASE_URL`.
+3. In your `globalTeardown`: call `dispose({ mode: 'test', root })`.
+
+```ts
+// framework globalSetup (sketch)
+import { ensureIfNeeded } from "@cedarjs/pg";
+
+if (process.env.CEDAR_PG === "1" || process.env.CEDAR_PG === "true") {
+  await ensureIfNeeded({
+    root: projectRoot, // e.g. getPaths().base
+    mode: "test",
+    setEnv: true, // this process (prisma) — workers use @cedarjs/pg/test-env
+    url: process.env.TEST_DATABASE_URL,
+    force: process.env.CEDAR_PG_FORCE === "1",
+    disabled: false, // framework opt-in; adapters alone use CEDAR_PG=0 opt-out
+  });
+}
+// … prisma db push / migrate …
+```
+
+```js
+// jest-preset
+setupFiles: [require.resolve("@cedarjs/pg/test-env")],
+```
+
+Use exported `STATE_DIRNAME` (`.cedarpg`) / `loadTestEnv(root?)` instead of hardcoding the lease dir.
+
 ## Programmatic API
 
 ```ts
-import { ensure, dispose } from "@cedarjs/pg";
+import { ensure, dispose, loadTestEnv, STATE_DIRNAME } from "@cedarjs/pg";
 
 const { databaseUrl, databaseName, dispose: drop } = await ensure({ mode: "test" });
 // … tests …
@@ -146,12 +202,12 @@ import { ensure } from "@cedarjs/pg";
 const { databaseUrl } = await ensure({ mode: "test" });
 ```
 
-| Signal                      | Effect                                               |
-| --------------------------- | ---------------------------------------------------- |
-| `CEDAR_PG_EPHEMERAL_HOST=1` | Force owned ephemeral host                           |
-| `CEDAR_PG_EPHEMERAL_HOST=0` | Force local attach / pm2 install (even if `CI=true`) |
-| unset + `CI=true`           | Auto ephemeral                                       |
-| otherwise                   | Local: attach if live, else bare `autopg install`    |
+| Signal                      | Effect                                                              |
+| --------------------------- | ------------------------------------------------------------------- |
+| `CEDAR_PG_EPHEMERAL_HOST=1` | Prefer ephemeral start when **no** host is live (attach still wins) |
+| `CEDAR_PG_EPHEMERAL_HOST=0` | Force local attach / pm2 install (even if `CI=true`)                |
+| unset + `CI=true`           | Prefer ephemeral when no host is live                               |
+| otherwise                   | Local: attach if live, else bare `autopg install`                   |
 
 Ephemeral recipe (not configurable via cedar-pg):
 
@@ -196,6 +252,8 @@ Set `CEDAR_PG_INSTALL_AUTOPG=1` so `postinstall` still fetches autopg when the c
 ## Alpha caveats
 
 - Public API may change before `0.1.0`.
-- End-to-end Postgres flows assume a working local `autopg` host; CI unit tests do not start Postgres.
+- End-to-end Postgres flows assume a working local `autopg` host; unit tests do not start Postgres.
+  CI runs `vp run smoke:pg` for Vitest/Jest adapters against real Postgres
+  (ephemeral cold-start when the runner has no live host; attach-wins otherwise).
 - State lives in product-owned `.cedarpg` (worktree + `~/.cedarpg/registry`), not under autopg's `~/.autopg/` or a generic `.pg`.
 - Password salt (`cedar-pg\\0`, scheme v1) is an opaque crypto constant; bump the scheme id to change it.

@@ -17,6 +17,18 @@ jobs:
           node-version-file: .node-version
           cache: true
 
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/share/autopg
+            ~/.local/bin/autopg
+          key: autopg-v3.0.7-${{ runner.os }}
+
+      - run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
       - run: vp check
       - run: vp test
       - run: vp run smoke
+      - run: vp run smoke:pg
+        env:
+          CEDAR_PG_INSTALL_AUTOPG: "1"
