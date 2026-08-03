@@ -221,27 +221,21 @@ Ephemeral recipe (not configurable via cedar-pg):
 
 If a host is already live, cedar-pg attaches and does not start another. The **CI job owns** ephemeral postmaster lifetime (runner teardown / `/dev/shm`); there is no cedar-pg host dispose API.
 
-### CI caching (GitHub Actions)
+### CI setup (GitHub Actions)
 
-Use **binary-only** install (`scripts/ci-install-autopg.sh`) — attested fetch, no pm2. Version comes from `scripts/autopg-version`. Cache the binary tree so cold jobs skip the ~155MB download:
+Prefer the composite action (cache + attested binary install, no pm2). Version defaults to this repo’s `scripts/autopg-version`:
 
 ```yaml
-- id: autopg
-  run: echo "version=$(tr -d '[:space:]' < scripts/autopg-version)" >> "$GITHUB_OUTPUT"
-- uses: actions/cache@v4
-  with:
-    path: |
-      ~/.local/share/autopg
-      ~/.local/bin/autopg
-    key: autopg-${{ steps.autopg.outputs.version }}-${{ runner.os }}
-- run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-- name: Install autopg binary
-  env:
-    GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  run: bash scripts/ci-install-autopg.sh
+- uses: actions/checkout@v6
+# In cedar-pg:
+- uses: ./.github/actions/setup-autopg
+# From another repo (pin to a tag when publishing the action):
+# - uses: cedarjs/cedar-pg/.github/actions/setup-autopg@main
 ```
 
-For published-package consumers under `CI=true`, set `CEDAR_PG_INSTALL_AUTOPG=1` so `postinstall` runs the same binary-only script (not upstream `install.sh`). Or bake the binary into the image.
+See [`.github/actions/setup-autopg`](.github/actions/setup-autopg/README.md) for inputs (`version`, `cache`, `token`) and outputs.
+
+The action runs `scripts/ci-install-autopg.sh` under the hood. For published-package consumers under `CI=true` without the Action, set `CEDAR_PG_INSTALL_AUTOPG=1` so `postinstall` runs that same script (not upstream `install.sh`). Or bake the binary into the image.
 
 ## Env
 

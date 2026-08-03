@@ -17,23 +17,7 @@ jobs:
           node-version-file: .node-version
           cache: true
 
-      - id: autopg
-        run: echo "version=$(tr -d '[:space:]' < scripts/autopg-version)" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.local/share/autopg
-            ~/.local/bin/autopg
-          key: autopg-${{ steps.autopg.outputs.version }}-${{ runner.os }}
-
-      - run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
-      # Binary only (no pm2). Attestation verify needs GH_TOKEN on Actions.
-      - name: Install autopg binary
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash scripts/ci-install-autopg.sh
+      - uses: ./.github/actions/setup-autopg
 
       - run: vp check
       - run: vp test
