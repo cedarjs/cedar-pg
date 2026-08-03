@@ -3,6 +3,28 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import type { EnsureIfNeededResult } from "../src/core/lifecycle.ts";
+
+function ensuredLease(
+  overrides: Partial<Extract<EnsureIfNeededResult, { status: "ensured" }>> = {},
+): Extract<EnsureIfNeededResult, { status: "ensured" }> {
+  return {
+    status: "ensured",
+    databaseUrl: "postgresql://role:pw@127.0.0.1:5433/cpg_tmpl",
+    adminUrl: "postgresql://postgres:postgres@127.0.0.1:5433/postgres",
+    databaseName: "cpg_tmpl",
+    roleName: "cpg_tmpl_role",
+    repoSlug: "cedar",
+    worktreeSlug: "main",
+    pathHash: "abcd1234",
+    root: "/tmp/wt",
+    mode: "test",
+    port: 5433,
+    dispose: async () => {},
+    ...overrides,
+  };
+}
+
 async function withMockedLifecycle<T>(
   mocks: {
     ensureIfNeeded?: ReturnType<typeof vi.fn>;
@@ -34,20 +56,7 @@ async function withMockedLifecycle<T>(
 }
 
 test("setupTemplateMode ensures, migrates, then markTemplate", async () => {
-  const ensureIfNeeded = vi.fn(async () => ({
-    status: "ensured" as const,
-    databaseUrl: "postgresql://role:pw@127.0.0.1:5433/cpg_tmpl",
-    adminUrl: "postgresql://postgres:postgres@127.0.0.1:5433/postgres",
-    databaseName: "cpg_tmpl",
-    roleName: "cpg_tmpl_role",
-    repoSlug: "cedar",
-    worktreeSlug: "main",
-    pathHash: "abcd1234",
-    root: "/tmp/wt",
-    mode: "test" as const,
-    port: 5433,
-    dispose: async () => {},
-  }));
+  const ensureIfNeeded = vi.fn(async () => ensuredLease());
   const markTemplate = vi.fn(async () => ({ databaseName: "cpg_tmpl" }));
   const migrate = vi.fn(async () => {});
 
@@ -73,31 +82,7 @@ test("setupTemplateMode ensures, migrates, then markTemplate", async () => {
   });
 });
 
-test("setupTemplateMode without migrate does not markTemplate", async () => {
-  const ensureIfNeeded = vi.fn(async () => ({
-    status: "ensured" as const,
-    databaseUrl: "postgresql://role:pw@127.0.0.1:5433/cpg_tmpl",
-    adminUrl: "postgresql://postgres:postgres@127.0.0.1:5433/postgres",
-    databaseName: "cpg_tmpl",
-    roleName: "cpg_tmpl_role",
-    repoSlug: "cedar",
-    worktreeSlug: "main",
-    pathHash: "abcd1234",
-    root: "/tmp/wt",
-    mode: "test" as const,
-    port: 5433,
-    dispose: async () => {},
-  }));
-  const markTemplate = vi.fn(async () => ({ databaseName: "cpg_tmpl" }));
-
-  await withMockedLifecycle({ ensureIfNeeded, markTemplate }, async () => {
-    const { setupTemplateMode } = await import("../src/adapters/template-mode.ts");
-    await setupTemplateMode({ setEnv: false });
-    expect(markTemplate).not.toHaveBeenCalled();
-  });
-});
-
-test("setupTemplateMode skips mark when ensure is skipped", async () => {
+test("setupTemplateMode skips migrate/mark when ensure is skipped", async () => {
   const ensureIfNeeded = vi.fn(async () => ({
     status: "skipped" as const,
     reason: "disabled" as const,
@@ -153,11 +138,42 @@ test("setupTemplateWorker clones with JEST_WORKER_ID and setEnv", async () => {
   }
 });
 
+test("setupTemplateWorker external-url skip sets DATABASE_URL and TEST_DATABASE_URL", async () => {
+  const prevCedar = process.env.CEDAR_PG;
+  const prevUrl = process.env.TEST_DATABASE_URL;
+  const prevDb = process.env.DATABASE_URL;
+  delete process.env.CEDAR_PG;
+  process.env.TEST_DATABASE_URL = "postgresql://ci:ci@db.example/app";
+
+  const cloneFromTemplate = vi.fn(async () => {
+    throw new Error("should not clone");
+  });
+
+  try {
+    await withMockedLifecycle({ cloneFromTemplate }, async () => {
+      const { setupTemplateWorker } = await import("../src/adapters/template-mode.ts");
+      await setupTemplateWorker();
+      expect(cloneFromTemplate).not.toHaveBeenCalled();
+      expect(process.env.DATABASE_URL).toBe("postgresql://ci:ci@db.example/app");
+      expect(process.env.TEST_DATABASE_URL).toBe("postgresql://ci:ci@db.example/app");
+    });
+  } finally {
+    if (prevCedar === undefined) delete process.env.CEDAR_PG;
+    else process.env.CEDAR_PG = prevCedar;
+    if (prevUrl === undefined) delete process.env.TEST_DATABASE_URL;
+    else process.env.TEST_DATABASE_URL = prevUrl;
+    if (prevDb === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = prevDb;
+  }
+});
+
 test("ensureWorkerDatabase is idempotent per process", async () => {
   const prevCedar = process.env.CEDAR_PG;
   const prevUrl = process.env.TEST_DATABASE_URL;
+  const prevJest = process.env.JEST_WORKER_ID;
   delete process.env.CEDAR_PG;
   delete process.env.TEST_DATABASE_URL;
+  process.env.JEST_WORKER_ID = "1";
 
   const cloneFromTemplate = vi.fn(async () => ({
     databaseUrl: "postgresql://role:pw@127.0.0.1:5433/cpg_tmpl_c_1",
@@ -172,8 +188,8 @@ test("ensureWorkerDatabase is idempotent per process", async () => {
   try {
     await withMockedLifecycle({ cloneFromTemplate }, async () => {
       const { ensureWorkerDatabase } = await import("../src/adapters/template-mode.ts");
-      await ensureWorkerDatabase({ name: "1" });
-      await ensureWorkerDatabase({ name: "1" });
+      await ensureWorkerDatabase();
+      await ensureWorkerDatabase();
       expect(cloneFromTemplate).toHaveBeenCalledTimes(1);
     });
   } finally {
@@ -181,6 +197,8 @@ test("ensureWorkerDatabase is idempotent per process", async () => {
     else process.env.CEDAR_PG = prevCedar;
     if (prevUrl === undefined) delete process.env.TEST_DATABASE_URL;
     else process.env.TEST_DATABASE_URL = prevUrl;
+    if (prevJest === undefined) delete process.env.JEST_WORKER_ID;
+    else process.env.JEST_WORKER_ID = prevJest;
   }
 });
 
@@ -193,56 +211,8 @@ test("teardownTemplateMode disposes test lease", async () => {
   });
 });
 
-test("resolveMigrateFromEnv loads migrate export from file URL", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "cedarpg-migrate-"));
-  const file = join(dir, "migrate.mjs");
-  writeFileSync(
-    file,
-    `export async function migrate(ctx) { globalThis.__cedarMigrateCtx = ctx; }\n`,
-  );
-  const prev = process.env.CEDAR_PG_MIGRATE;
-  process.env.CEDAR_PG_MIGRATE = pathToFileURL(file).href;
-
-  try {
-    vi.resetModules();
-    const { resolveMigrateFromEnv } = await import("../src/adapters/template-mode.ts");
-    const migrate = await resolveMigrateFromEnv();
-    expect(typeof migrate).toBe("function");
-    await migrate?.({
-      databaseUrl: "u",
-      adminUrl: "a",
-      databaseName: "d",
-      roleName: "r",
-    });
-    expect((globalThis as { __cedarMigrateCtx?: unknown }).__cedarMigrateCtx).toEqual({
-      databaseUrl: "u",
-      adminUrl: "a",
-      databaseName: "d",
-      roleName: "r",
-    });
-  } finally {
-    if (prev === undefined) delete process.env.CEDAR_PG_MIGRATE;
-    else process.env.CEDAR_PG_MIGRATE = prev;
-    rmSync(dir, { recursive: true, force: true });
-    vi.resetModules();
-  }
-});
-
 test("createTemplateGlobalSetup wires migrate hook", async () => {
-  const ensureIfNeeded = vi.fn(async () => ({
-    status: "ensured" as const,
-    databaseUrl: "postgresql://role:pw@127.0.0.1:5433/cpg_tmpl",
-    adminUrl: "postgresql://postgres:postgres@127.0.0.1:5433/postgres",
-    databaseName: "cpg_tmpl",
-    roleName: "cpg_tmpl_role",
-    repoSlug: "cedar",
-    worktreeSlug: "main",
-    pathHash: "abcd1234",
-    root: "/tmp/wt",
-    mode: "test" as const,
-    port: 5433,
-    dispose: async () => {},
-  }));
+  const ensureIfNeeded = vi.fn(async () => ensuredLease());
   const markTemplate = vi.fn(async () => ({ databaseName: "cpg_tmpl" }));
   const migrate = vi.fn(async () => {});
 
@@ -254,21 +224,22 @@ test("createTemplateGlobalSetup wires migrate hook", async () => {
   });
 });
 
+test("jest template default requires CEDAR_PG_MIGRATE", async () => {
+  const prev = process.env.CEDAR_PG_MIGRATE;
+  delete process.env.CEDAR_PG_MIGRATE;
+  try {
+    vi.resetModules();
+    const mod = await import("../src/adapters/jest-template.ts");
+    await expect(mod.default()).rejects.toThrow(/CEDAR_PG_MIGRATE|createGlobalSetup/);
+  } finally {
+    if (prev === undefined) delete process.env.CEDAR_PG_MIGRATE;
+    else process.env.CEDAR_PG_MIGRATE = prev;
+    vi.resetModules();
+  }
+});
+
 test("jest template default export uses CEDAR_PG_MIGRATE", async () => {
-  const ensureIfNeeded = vi.fn(async () => ({
-    status: "ensured" as const,
-    databaseUrl: "postgresql://role:pw@127.0.0.1:5433/cpg_tmpl",
-    adminUrl: "postgresql://postgres:postgres@127.0.0.1:5433/postgres",
-    databaseName: "cpg_tmpl",
-    roleName: "cpg_tmpl_role",
-    repoSlug: "cedar",
-    worktreeSlug: "main",
-    pathHash: "abcd1234",
-    root: "/tmp/wt",
-    mode: "test" as const,
-    port: 5433,
-    dispose: async () => {},
-  }));
+  const ensureIfNeeded = vi.fn(async () => ensuredLease());
   const markTemplate = vi.fn(async () => ({ databaseName: "cpg_tmpl" }));
 
   const dir = mkdtempSync(join(tmpdir(), "cedarpg-migrate-"));

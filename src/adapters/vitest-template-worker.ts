@@ -1,6 +1,4 @@
-import { ensureWorkerDatabase, setupTemplateWorker } from "./template-mode.ts";
-
-export { ensureWorkerDatabase, setupTemplateWorker };
+import { ensureWorkerDatabase } from "./template-mode.ts";
 
 /**
  * Vitest setupFiles entry — clones once per worker process and sets DATABASE_URL.
@@ -8,4 +6,5 @@ export { ensureWorkerDatabase, setupTemplateWorker };
  */
 await ensureWorkerDatabase();
 
+export { ensureWorkerDatabase };
 export default ensureWorkerDatabase;

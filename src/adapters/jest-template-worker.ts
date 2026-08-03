@@ -1,6 +1,4 @@
-import { ensureWorkerDatabase, setupTemplateWorker } from "./template-mode.ts";
-
-export { ensureWorkerDatabase, setupTemplateWorker };
+import { ensureWorkerDatabase } from "./template-mode.ts";
 
 /**
  * Jest per-worker helper. Prefer setupFilesAfterEnv:
@@ -11,4 +9,5 @@ export { ensureWorkerDatabase, setupTemplateWorker };
  * beforeAll(() => ensureWorkerDatabase());
  * ```
  */
+export { ensureWorkerDatabase };
 export default ensureWorkerDatabase;

@@ -1,18 +1,9 @@
 import {
-  ensureWorkerDatabase,
-  resolveMigrateFromEnv,
+  requireMigrateFromEnv,
   setupTemplateMode,
-  setupTemplateWorker,
   teardownTemplateMode,
   type SetupTemplateModeOptions,
 } from "./template-mode.ts";
-
-export {
-  ensureWorkerDatabase,
-  setupTemplateMode,
-  setupTemplateWorker,
-  teardownTemplateMode as teardown,
-};
 
 /**
  * Vitest globalSetup (template mode). Returns teardown that disposes TEMPLATE + clones.
@@ -26,14 +17,14 @@ export {
  * })
  * ```
  *
- * Set `CEDAR_PG_MIGRATE` or use `createSetup({ migrate })`.
+ * Requires `CEDAR_PG_MIGRATE` or `createGlobalSetup({ migrate })`.
  */
 export async function setup(): Promise<() => Promise<void>> {
-  const migrate = await resolveMigrateFromEnv();
-  return runSetup({ migrate });
+  return runSetup({ migrate: await requireMigrateFromEnv() });
 }
 
-export function createSetup(options: SetupTemplateModeOptions = {}) {
+/** Build a Vitest globalSetup with an in-process migrate hook. */
+export function createGlobalSetup(options: SetupTemplateModeOptions) {
   return async () => runSetup(options);
 }
 

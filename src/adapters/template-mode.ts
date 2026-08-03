@@ -20,23 +20,20 @@ export type TemplateMigrateFn = (ctx: TemplateMigrateContext) => void | Promise<
 
 export type SetupTemplateModeOptions = {
   root?: string;
-  /**
-   * App-owned migrate step. When provided, runs once against the ensured DB
-   * then `markTemplate` so workers can `cloneFromTemplate`.
-   */
-  migrate?: TemplateMigrateFn;
+  /** App-owned migrate; runs once, then `markTemplate`. Required. */
+  migrate: TemplateMigrateFn;
   setEnv?: boolean;
 };
 
 /**
  * Global setup for migrate-once + TEMPLATE clones:
- * ensure host/lease → optional migrate hook → markTemplate.
+ * ensure host/lease → migrate → markTemplate.
  *
- * Without `migrate`, only ensures and sets `CEDAR_PG_ADMIN_URL`; call
- * `markTemplate` yourself after your app migrate before workers clone.
+ * For migrate-yourself without a hook, use `ensure` + `markTemplate` from `@cedarjs/pg`
+ * instead of this helper.
  */
 export async function setupTemplateMode(
-  options: SetupTemplateModeOptions = {},
+  options: SetupTemplateModeOptions,
 ): Promise<EnsureIfNeededResult> {
   const result = await ensureIfNeeded({
     root: options.root,
@@ -47,20 +44,18 @@ export async function setupTemplateMode(
 
   process.env.CEDAR_PG_ADMIN_URL = result.adminUrl;
 
-  if (options.migrate) {
-    await options.migrate({
-      databaseUrl: result.databaseUrl,
-      adminUrl: result.adminUrl,
-      databaseName: result.databaseName,
-      roleName: result.roleName,
-    });
-    await markTemplate({
-      root: result.root,
-      mode: "test",
-      databaseName: result.databaseName,
-      adminUrl: result.adminUrl,
-    });
-  }
+  await options.migrate({
+    databaseUrl: result.databaseUrl,
+    adminUrl: result.adminUrl,
+    databaseName: result.databaseName,
+    roleName: result.roleName,
+  });
+  await markTemplate({
+    root: result.root,
+    mode: "test",
+    databaseName: result.databaseName,
+    adminUrl: result.adminUrl,
+  });
 
   return result;
 }
@@ -73,13 +68,14 @@ export type SetupTemplateWorkerOptions = {
 
 /**
  * Per-worker clone → sets DATABASE_URL / TEST_DATABASE_URL.
- * Idempotent per process (safe with setupFilesAfterEnv + beforeAll).
+ * Prefer {@link ensureWorkerDatabase} from setupFilesAfterEnv (process-once).
  */
 export async function setupTemplateWorker(options: SetupTemplateWorkerOptions = {}): Promise<void> {
   const skip = resolveEnsureSkip();
   if (skip.skip) {
     if (skip.reason === "external-url") {
       process.env.DATABASE_URL = skip.databaseUrl;
+      process.env.TEST_DATABASE_URL = skip.databaseUrl;
     }
     return;
   }
@@ -97,9 +93,12 @@ export async function setupTemplateWorker(options: SetupTemplateWorkerOptions = 
 
 let workerOnce: Promise<void> | undefined;
 
-/** Process-once wrapper around {@link setupTemplateWorker}. */
-export function ensureWorkerDatabase(options: SetupTemplateWorkerOptions = {}): Promise<void> {
-  workerOnce ??= setupTemplateWorker(options).catch((err) => {
+/**
+ * Process-once {@link setupTemplateWorker} using JEST_WORKER_ID / VITEST_POOL_ID / pid.
+ * For custom `name`/`root`, call `setupTemplateWorker` once yourself.
+ */
+export function ensureWorkerDatabase(): Promise<void> {
+  workerOnce ??= setupTemplateWorker().catch((err) => {
     workerOnce = undefined;
     throw err;
   });
@@ -111,11 +110,8 @@ export async function teardownTemplateMode(options: { root?: string } = {}): Pro
   await dispose({ root: options.root, mode: "test" });
 }
 
-/**
- * `createGlobalSetup({ migrate })` for thin app globalSetup files.
- * Bare `require.resolve("@cedarjs/pg/jest/template")` uses {@link resolveMigrateFromEnv}.
- */
-export function createTemplateGlobalSetup(options: SetupTemplateModeOptions = {}) {
+/** Factory for Jest-style `globalSetup` modules (void). */
+export function createTemplateGlobalSetup(options: SetupTemplateModeOptions) {
   return async () => {
     await setupTemplateMode(options);
   };
@@ -135,6 +131,17 @@ export async function resolveMigrateFromEnv(): Promise<TemplateMigrateFn | undef
     throw new Error("CEDAR_PG_MIGRATE must export migrate() or a default function");
   }
   return fn as TemplateMigrateFn;
+}
+
+/** Require migrate from env or throw (default runner hooks). */
+export async function requireMigrateFromEnv(): Promise<TemplateMigrateFn> {
+  const migrate = await resolveMigrateFromEnv();
+  if (!migrate) {
+    throw new Error(
+      "template mode requires a migrate hook: set CEDAR_PG_MIGRATE or use createGlobalSetup({ migrate })",
+    );
+  }
+  return migrate;
 }
 
 function toImportUrl(spec: string): string {

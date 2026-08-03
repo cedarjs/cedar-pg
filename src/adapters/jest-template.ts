@@ -1,19 +1,9 @@
 import {
   createTemplateGlobalSetup,
-  ensureWorkerDatabase,
-  resolveMigrateFromEnv,
+  requireMigrateFromEnv,
   setupTemplateMode,
-  setupTemplateWorker,
-  teardownTemplateMode,
+  type SetupTemplateModeOptions,
 } from "./template-mode.ts";
-
-export {
-  createTemplateGlobalSetup as createGlobalSetup,
-  ensureWorkerDatabase,
-  setupTemplateMode,
-  setupTemplateWorker,
-  teardownTemplateMode as teardown,
-};
 
 /**
  * Jest globalSetup (template mode).
@@ -24,10 +14,14 @@ export {
  * setupFilesAfterEnv: ["<rootDir>/jest.cedar-worker.cjs"],
  * ```
  *
- * Migrate via `CEDAR_PG_MIGRATE` (module exporting `migrate` or default) or
- * `createGlobalSetup({ migrate })`. Stock `@cedarjs/pg/jest` is one shared test DB only.
+ * Requires `CEDAR_PG_MIGRATE` or `createGlobalSetup({ migrate })`.
+ * Stock `@cedarjs/pg/jest` is one shared test DB only.
  */
 export default async function globalSetup(): Promise<void> {
-  const migrate = await resolveMigrateFromEnv();
-  await setupTemplateMode({ migrate });
+  await setupTemplateMode({ migrate: await requireMigrateFromEnv() });
+}
+
+/** Build a Jest globalSetup with an in-process migrate hook. */
+export function createGlobalSetup(options: SetupTemplateModeOptions) {
+  return createTemplateGlobalSetup(options);
 }

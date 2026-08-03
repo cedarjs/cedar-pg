@@ -24,8 +24,6 @@ export {
   setupTemplateWorker,
   ensureWorkerDatabase,
   teardownTemplateMode,
-  createTemplateGlobalSetup,
-  resolveMigrateFromEnv,
 } from "./adapters/template-mode.ts";
 export type {
   SetupTemplateModeOptions,
