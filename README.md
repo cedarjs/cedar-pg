@@ -155,10 +155,11 @@ const { databaseUrl } = await ensure({ mode: "test" });
 
 Ephemeral recipe (not configurable via cedar-pg):
 
-- `autopg install --no-pm2 --no-ui --data DIR`
-- detached `autopg postmaster` with `--socket-dir DIR`
-- Linux when `/dev/shm` exists → `--ram` and `DIR=/dev/shm/cedar-pg-<uid>`
+- `autopg install --no-pm2 --no-ui --port 55432 --data DIR`
+- detached `autopg postmaster --port 55432 --socket-dir DIR --data DIR`
+- Linux when `/dev/shm` exists → also `--ram` and `DIR=/dev/shm/cedar-pg-<uid>`
 - otherwise → disk `DIR` under the OS temp dir (still owned, no pm2)
+- Ready when TCP accepts on the recipe port (not merely `autopg status` after install)
 
 If a host is already live, cedar-pg attaches and does not start another. The **CI job owns** ephemeral postmaster lifetime (runner teardown / `/dev/shm`); there is no cedar-pg host dispose API.
 
