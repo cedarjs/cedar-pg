@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { buildDatabaseName, buildRoleName, type DbMode } from "./naming.ts";
 import {
+  envPath,
   forgetLease,
   isOrphanLease,
   leaseDir,
@@ -16,11 +16,10 @@ import { buildDatabaseUrl, dropDatabase, ensureDatabase } from "../providers/aut
 import { ensureHostRunning } from "../providers/host.ts";
 
 function writeEnvFile(root: string, mode: DbMode, databaseUrl: string): void {
-  const dir = leaseDir(root);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  mkdirSync(leaseDir(root), { recursive: true, mode: 0o700 });
   let body = `DATABASE_URL=${databaseUrl}\n`;
   if (mode === "test") body += `TEST_DATABASE_URL=${databaseUrl}\n`;
-  writeFileSync(join(dir, `${mode}.env`), body, { mode: 0o600 });
+  writeFileSync(envPath(root, mode), body, { mode: 0o600 });
 }
 
 export function urlFromLease(lease: Lease): string {

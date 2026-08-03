@@ -1,9 +1,10 @@
 import { expect, test } from "vite-plus/test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   clearLease,
+  envPath,
   isOrphanLease,
   listRegistryLeases,
   parseLease,
@@ -51,12 +52,17 @@ test("writeLease / readLease round-trip and register for gc", () => {
       databaseName: "cpg_cedar_main_test_abcd1234",
     });
     writeLease(lease);
+    writeFileSync(envPath(root, "test"), "DATABASE_URL=postgresql://u:p@127.0.0.1:1/db\n", {
+      mode: 0o600,
+    });
     expect(readLease(root, "test")).toEqual(lease);
     expect(listRegistryLeases().map((l) => l.databaseName)).toContain(lease.databaseName);
     expect(isOrphanLease(lease)).toBe(false);
+    expect(existsSync(envPath(root, "test"))).toBe(true);
 
     clearLease(root, "test");
     expect(readLease(root, "test")).toBeNull();
+    expect(existsSync(envPath(root, "test"))).toBe(false);
     expect(listRegistryLeases().map((l) => l.databaseName)).not.toContain(lease.databaseName);
   } finally {
     if (prev === undefined) delete process.env.CEDAR_PG_REGISTRY_DIR;
@@ -101,8 +107,10 @@ test("clearLease unregisters by peeked databaseName when full parse fails", () =
       join(root, ".cedarpg", "test.json"),
       JSON.stringify({ schemaVersion: 99, databaseName: lease.databaseName }),
     );
+    writeFileSync(envPath(root, "test"), "DATABASE_URL=postgresql://stale\n", { mode: 0o600 });
     expect(readLease(root, "test")).toBeNull();
     clearLease(root, "test");
+    expect(existsSync(envPath(root, "test"))).toBe(false);
     expect(listRegistryLeases().map((l) => l.databaseName)).not.toContain(lease.databaseName);
   } finally {
     if (prev === undefined) delete process.env.CEDAR_PG_REGISTRY_DIR;
