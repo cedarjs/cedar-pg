@@ -1,12 +1,11 @@
 import { expect, test } from "vite-plus/test";
 import {
   buildDatabaseUrl,
-  installArgsFor,
+  ephemeralHostRecipe,
   parseHostStatus,
-  postmasterArgsFor,
+  resolveEphemeralHostPolicy,
   rolePasswordFor,
   ROLE_PASSWORD_SCHEME,
-  usesOwnedPostmaster,
 } from "../src/providers/autopg.ts";
 
 test("parseHostStatus requires numeric port", () => {
@@ -16,64 +15,59 @@ test("parseHostStatus requires numeric port", () => {
   expect(() => parseHostStatus("not-json")).toThrow(/invalid JSON/);
 });
 
-test("installArgsFor defaults to bare install (pm2 path)", () => {
-  expect(installArgsFor({})).toEqual(["install"]);
-  expect(installArgsFor({ noUi: true, port: 5433, dataDir: "/tmp/pg" })).toEqual([
+test("resolveEphemeralHostPolicy from CEDAR_PG_EPHEMERAL_HOST and CI", () => {
+  expect(resolveEphemeralHostPolicy({ CEDAR_PG_EPHEMERAL_HOST: "1" })).toBe("ephemeral");
+  expect(resolveEphemeralHostPolicy({ CEDAR_PG_EPHEMERAL_HOST: "0", CI: "true" })).toBe("local");
+  expect(resolveEphemeralHostPolicy({ CI: "true" })).toBe("ephemeral");
+  expect(resolveEphemeralHostPolicy({ CI: "1" })).toBe("local");
+  expect(resolveEphemeralHostPolicy({})).toBe("local");
+});
+
+test("ephemeralHostRecipe uses RAM on Linux when /dev/shm is available", () => {
+  const recipe = ephemeralHostRecipe({
+    platform: "linux",
+    shmAvailable: true,
+    uid: 1000,
+  });
+  expect(recipe.ram).toBe(true);
+  expect(recipe.dataDir).toBe("/dev/shm/cedar-pg-1000");
+  expect(recipe.installArgs).toEqual([
     "install",
+    "--no-pm2",
     "--no-ui",
-    "--port",
-    "5433",
     "--data",
-    "/tmp/pg",
+    "/dev/shm/cedar-pg-1000",
+  ]);
+  expect(recipe.postmasterArgs).toEqual([
+    "postmaster",
+    "--ram",
+    "--socket-dir",
+    "/dev/shm/cedar-pg-1000",
   ]);
 });
 
-test("installArgsFor / postmasterArgsFor match CI ephemeral recipe", () => {
-  const opts = {
-    ram: true,
-    noPm2: true,
-    noUi: true,
-    port: 55432,
-    dataDir: "/dev/shm/autopg-ci",
-  };
-  expect(usesOwnedPostmaster(opts)).toBe(true);
-  expect(usesOwnedPostmaster({ ram: true })).toBe(true);
-  expect(usesOwnedPostmaster({ noPm2: true })).toBe(true);
-  expect(usesOwnedPostmaster({ noUi: true })).toBe(false);
-
-  expect(installArgsFor(opts)).toEqual([
+test("ephemeralHostRecipe falls back to disk tmpdir without --ram", () => {
+  const recipe = ephemeralHostRecipe({
+    platform: "darwin",
+    shmAvailable: false,
+    tmpDir: "/tmp/cedar-test",
+    uid: 1,
+  });
+  expect(recipe.ram).toBe(false);
+  expect(recipe.dataDir).toBe("/tmp/cedar-test/cedar-pg-host");
+  expect(recipe.installArgs).toEqual([
     "install",
     "--no-pm2",
     "--no-ui",
-    "--port",
-    "55432",
     "--data",
-    "/dev/shm/autopg-ci",
+    "/tmp/cedar-test/cedar-pg-host",
   ]);
-  // ram implies --no-pm2 on install even when noPm2 is omitted
-  expect(installArgsFor({ ram: true, dataDir: "/dev/shm/x" })).toEqual([
-    "install",
-    "--no-pm2",
-    "--data",
-    "/dev/shm/x",
-  ]);
-  expect(postmasterArgsFor(opts)).toEqual([
+  expect(recipe.postmasterArgs).toEqual([
     "postmaster",
-    "--ram",
-    "--port",
-    "55432",
     "--socket-dir",
-    "/dev/shm/autopg-ci",
-  ]);
-  // non-ram owned postmaster also passes --data
-  expect(postmasterArgsFor({ noPm2: true, dataDir: "/tmp/pg", port: 5433 })).toEqual([
-    "postmaster",
-    "--port",
-    "5433",
-    "--socket-dir",
-    "/tmp/pg",
+    "/tmp/cedar-test/cedar-pg-host",
     "--data",
-    "/tmp/pg",
+    "/tmp/cedar-test/cedar-pg-host",
   ]);
 });
 

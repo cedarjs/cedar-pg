@@ -79,7 +79,7 @@ export async function ensure(options: EnsureOptions): Promise<EnsureResult> {
   const databaseName = buildDatabaseName(identity, mode);
   const roleName = buildRoleName(databaseName);
 
-  const host = ensureHostRunning();
+  const host = await ensureHostRunning();
   await ensureDatabase({
     adminUrl: host.adminUrl,
     databaseName,
@@ -192,7 +192,7 @@ export async function dispose(options: DisposeOptions = {}): Promise<DisposeResu
 
   let host;
   try {
-    host = ensureHostRunning();
+    host = await ensureHostRunning();
   } catch {
     // Keep lease + registry so a later dispose/gc can still find the DB.
     return { dropped: false, reason: "host-unavailable" };
@@ -215,7 +215,7 @@ export async function gc(): Promise<{
 
   let host;
   try {
-    host = ensureHostRunning();
+    host = await ensureHostRunning();
   } catch {
     return { dropped };
   }
