@@ -10,6 +10,7 @@ Initial alpha of **cedar-pg**, published on npm as `@cedarjs/pg` (CLI: `cedarpg`
 - Jest workers: `@cedarjs/pg/test-env` + `@cedarjs/pg/jest-teardown` (globalSetup cannot set worker env)
 - Public exports: `STATE_DIRNAME`, `loadTestEnv` for framework hosts (avoid hardcoding `.cedarpg`)
 - CI: `vp run smoke:pg` runs Vitest + Jest against real Postgres (ephemeral when no host is live)
+- Single autopg pin in `scripts/autopg-version`; CI uses binary-only `ci-install-autopg.sh` (no pm2)
 
 - Registry-backed `gc` for orphan worktrees; lease-gated dispose (drop-then-forget)
 - `ensureIfNeeded` policy with external-URL escape hatch

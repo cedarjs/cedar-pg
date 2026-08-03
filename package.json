@@ -29,6 +29,8 @@
   },
   "files": [
     "dist",
+    "scripts/autopg-version",
+    "scripts/ci-install-autopg.sh",
     "scripts/postinstall.js"
   ],
   "type": "module",

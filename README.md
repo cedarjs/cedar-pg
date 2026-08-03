@@ -57,11 +57,13 @@ Examples:
 ## Prerequisites
 
 A running [autopg](https://github.com/automagik-dev/autopg) host (installed automatically by `postinstall`, or manually).
-Both the install script and binary are pinned to a release tag (currently `v3.0.7`); bump the pin in `scripts/postinstall.js` to upgrade:
+The release pin lives in **`scripts/autopg-version`** (single source of truth for postinstall, CI binary install, and docs). Bump that file to upgrade:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/automagik-dev/autopg/v3.0.7/install.sh \
-  | AUTOPG_VERSION=v3.0.7 bash
+# local / non-CI (upstream install.sh; may use pm2)
+VER=$(tr -d '[:space:]' < scripts/autopg-version)
+curl -fsSL "https://raw.githubusercontent.com/automagik-dev/autopg/${VER}/install.sh" \
+  | AUTOPG_VERSION="$VER" bash
 ```
 
 Typical flow: `autopg daemon` (or your usual host install) once per machine → `cedarpg ensure` per worktree → connect with the printed `DATABASE_URL`.
@@ -221,33 +223,39 @@ If a host is already live, cedar-pg attaches and does not start another. The **C
 
 ### CI caching (GitHub Actions)
 
-Pin the autopg version (this package’s `postinstall` already pins a release tag — currently `v3.0.7`). Cache the binary tree so cold jobs skip the ~155MB download:
+Use **binary-only** install (`scripts/ci-install-autopg.sh`) — attested fetch, no pm2. Version comes from `scripts/autopg-version`. Cache the binary tree so cold jobs skip the ~155MB download:
 
 ```yaml
+- id: autopg
+  run: echo "version=$(tr -d '[:space:]' < scripts/autopg-version)" >> "$GITHUB_OUTPUT"
 - uses: actions/cache@v4
   with:
     path: |
       ~/.local/share/autopg
       ~/.local/bin/autopg
-    key: autopg-v3.0.7-${{ runner.os }}
+    key: autopg-${{ steps.autopg.outputs.version }}-${{ runner.os }}
 - run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+- name: Install autopg binary
+  env:
+    GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  run: bash scripts/ci-install-autopg.sh
 ```
 
-Set `CEDAR_PG_INSTALL_AUTOPG=1` so `postinstall` still fetches autopg when the cache misses under `CI=true`. Or bake the binary into the image.
+For published-package consumers under `CI=true`, set `CEDAR_PG_INSTALL_AUTOPG=1` so `postinstall` runs the same binary-only script (not upstream `install.sh`). Or bake the binary into the image.
 
 ## Env
 
-| Var                            | Meaning                                                            |
-| ------------------------------ | ------------------------------------------------------------------ |
-| `AUTOPG_BIN`                   | Path to autopg                                                     |
-| `AUTOPG_PG_USER` / `_PASSWORD` | Autopg superuser for admin URL (default `postgres` / `postgres`)   |
-| `CEDAR_PG=0`                   | Disable auto-ensure in adapters                                    |
-| `TEST_DATABASE_URL`            | Escape hatch: skip ensure for external DBs (not `cpg_*` / `file:`) |
-| `CEDAR_PG_FORCE=1`             | Ignore external-URL escape hatch                                   |
-| `CEDAR_PG_EPHEMERAL_HOST`      | `1` force / `0` disable ephemeral host (auto when `CI=true`)       |
-| `CEDAR_PG_REGISTRY_DIR`        | Override global lease registry (for `gc`)                          |
-| `CEDAR_PG_SKIP_POSTINSTALL=1`  | Skip autopg install hook                                           |
-| `CEDAR_PG_INSTALL_AUTOPG=1`    | Force autopg install in CI                                         |
+| Var                            | Meaning                                                                  |
+| ------------------------------ | ------------------------------------------------------------------------ |
+| `AUTOPG_BIN`                   | Path to autopg                                                           |
+| `AUTOPG_PG_USER` / `_PASSWORD` | Autopg superuser for admin URL (default `postgres` / `postgres`)         |
+| `CEDAR_PG=0`                   | Disable auto-ensure in adapters                                          |
+| `TEST_DATABASE_URL`            | Escape hatch: skip ensure for external DBs (not `cpg_*` / `file:`)       |
+| `CEDAR_PG_FORCE=1`             | Ignore external-URL escape hatch                                         |
+| `CEDAR_PG_EPHEMERAL_HOST`      | `1` force / `0` disable ephemeral host (auto when `CI=true`)             |
+| `CEDAR_PG_REGISTRY_DIR`        | Override global lease registry (for `gc`)                                |
+| `CEDAR_PG_SKIP_POSTINSTALL=1`  | Skip autopg install hook                                                 |
+| `CEDAR_PG_INSTALL_AUTOPG=1`    | Under `CI=true`, run binary-only `ci-install-autopg.sh` from postinstall |
 
 ## Alpha caveats
 
