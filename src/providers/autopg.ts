@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
+import { execFileSync, spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { existsSync, mkdirSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import pg from "pg";
 import { PASSWORD_SALT_PREFIX } from "../core/constants.ts";
@@ -12,28 +12,15 @@ export type AutopgDiscovery = {
   bin: string;
 };
 
-/**
- * Options for starting an autopg host when none is already live.
- *
- * Local default: omit options → attach if `autopg status` is live, else
- * `autopg install` (pm2 Tier A).
- *
- * CI / ephemeral: pass `noPm2` + `noUi` (+ optional `ram` / `dataDir` / `port`)
- * so cedar-pg owns a detached `autopg postmaster` instead of ambient pm2.
- */
-export type EnsureHostOptions = {
-  /** Linux: `autopg postmaster --ram` (/dev/shm). Implies owned (non-pm2) lifecycle. */
-  ram?: boolean;
-  /** Data directory for install / postmaster (e.g. `/dev/shm/autopg-ci`). */
-  dataDir?: string;
-  /** Skip pm2 registration (Tier B / CI). Starts a detached postmaster. */
-  noPm2?: boolean;
-  /** Skip the autopg UI process (`--no-ui`). */
-  noUi?: boolean;
-  /** TCP port for Postgres. */
-  port?: number;
-  /** Override autopg binary path (same as passing a string to `ensureHostRunning`). */
-  bin?: string;
+/** How cedar-pg starts an autopg host when none is already live. */
+export type HostStartPolicy = "local" | "ephemeral";
+
+/** Opinionated install + postmaster argv for CI / ephemeral runners. */
+export type EphemeralHostRecipe = {
+  dataDir: string;
+  ram: boolean;
+  installArgs: string[];
+  postmasterArgs: string[];
 };
 
 /** How long to wait for a freshly spawned postmaster to become discoverable. */
@@ -117,91 +104,112 @@ export function discoverHost(bin = requireAutopgBin()): AutopgDiscovery {
   return { port, adminUrl: adminUrlFor(port), bin };
 }
 
-function normalizeEnsureHostOptions(
-  optionsOrBin: EnsureHostOptions | string = {},
-): EnsureHostOptions {
-  if (typeof optionsOrBin === "string") return { bin: optionsOrBin };
-  return optionsOrBin;
-}
-
-/** True when cedar-pg must own a detached postmaster (not pm2). */
-export function usesOwnedPostmaster(opts: EnsureHostOptions): boolean {
-  return Boolean(opts.noPm2 || opts.ram);
-}
-
-/** `autopg install` argv for the given options (excluding the binary). */
-export function installArgsFor(opts: EnsureHostOptions): string[] {
-  const args = ["install"];
-  if (usesOwnedPostmaster(opts)) args.push("--no-pm2");
-  if (opts.noUi) args.push("--no-ui");
-  if (opts.port != null) args.push("--port", String(opts.port));
-  if (opts.dataDir) args.push("--data", opts.dataDir);
-  return args;
+/**
+ * Resolve whether to start an owned ephemeral postmaster or use local pm2 install.
+ *
+ * - `CEDAR_PG_EPHEMERAL_HOST=1` → ephemeral
+ * - `CEDAR_PG_EPHEMERAL_HOST=0` → local (even when `CI=true`)
+ * - unset + `CI=true` → ephemeral
+ * - otherwise → local
+ */
+export function resolveEphemeralHostPolicy(env: NodeJS.ProcessEnv = process.env): HostStartPolicy {
+  const force = env.CEDAR_PG_EPHEMERAL_HOST;
+  if (force === "1") return "ephemeral";
+  if (force === "0") return "local";
+  if (env.CI === "true") return "ephemeral";
+  return "local";
 }
 
 /**
- * `autopg postmaster` argv for owned (non-pm2) starts.
- * Matches the supported CI recipe: `--ram` + `--socket-dir` when `dataDir` is set.
+ * Fixed CI recipe: `install --no-pm2 --no-ui --data DIR` + detached
+ * `postmaster` (`--ram` + `/dev/shm/cedar-pg-<uid>` on Linux when shm exists).
  */
-export function postmasterArgsFor(opts: EnsureHostOptions): string[] {
-  const args = ["postmaster"];
-  if (opts.ram) args.push("--ram");
-  if (opts.port != null) args.push("--port", String(opts.port));
-  if (opts.dataDir) {
-    args.push("--socket-dir", opts.dataDir);
-    if (!opts.ram) args.push("--data", opts.dataDir);
-  }
-  return args;
+export function ephemeralHostRecipe(opts?: {
+  platform?: NodeJS.Platform;
+  shmAvailable?: boolean;
+  tmpDir?: string;
+  uid?: number;
+}): EphemeralHostRecipe {
+  const platform = opts?.platform ?? process.platform;
+  const shmAvailable = opts?.shmAvailable ?? (platform === "linux" && existsSync("/dev/shm"));
+  const uid = opts?.uid ?? process.getuid?.() ?? 0;
+  const ram = platform === "linux" && shmAvailable;
+  const dataDir = ram
+    ? `/dev/shm/cedar-pg-${uid}`
+    : join(opts?.tmpDir ?? tmpdir(), "cedar-pg-host");
+
+  const installArgs = ["install", "--no-pm2", "--no-ui", "--data", dataDir];
+  const postmasterArgs = ram
+    ? ["postmaster", "--ram", "--socket-dir", dataDir]
+    : ["postmaster", "--socket-dir", dataDir, "--data", dataDir];
+
+  return { dataDir, ram, installArgs, postmasterArgs };
 }
 
-function sleepSync(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function startOwnedPostmaster(bin: string, opts: EnsureHostOptions): void {
-  const child = spawn(bin, postmasterArgsFor(opts), {
+function startOwnedPostmaster(
+  bin: string,
+  postmasterArgs: string[],
+): {
+  child: ChildProcess;
+  getStderr: () => string;
+  getExit: () => { code: number | null; signal: NodeJS.Signals | null } | null;
+} {
+  let stderr = "";
+  let exit: { code: number | null; signal: NodeJS.Signals | null } | null = null;
+  const child = spawn(bin, postmasterArgs, {
     detached: true,
-    stdio: "ignore",
+    stdio: ["ignore", "ignore", "pipe"],
   });
-  child.unref();
+  child.stderr?.setEncoding("utf8");
+  child.stderr?.on("data", (chunk: string) => {
+    stderr += chunk;
+  });
+  child.on("exit", (code, signal) => {
+    exit = { code, signal };
+  });
+  return {
+    child,
+    getStderr: () => stderr,
+    getExit: () => exit,
+  };
 }
 
-function waitForHost(bin: string, timeoutMs = OWNED_POSTMASTER_READY_MS): AutopgDiscovery {
+async function waitForOwnedHost(
+  bin: string,
+  started: ReturnType<typeof startOwnedPostmaster>,
+  timeoutMs = OWNED_POSTMASTER_READY_MS,
+): Promise<AutopgDiscovery> {
   const deadline = Date.now() + timeoutMs;
   let lastDetail = "host not ready";
   while (Date.now() < deadline) {
+    const exited = started.getExit();
+    if (exited) {
+      throw new Error(
+        `autopg postmaster exited before ready (code=${exited.code}, signal=${exited.signal}).\n` +
+          `${started.getStderr()}\n${INSTALL_HINT}`,
+      );
+    }
     try {
-      return discoverHost(bin);
+      const discovery = discoverHost(bin);
+      started.child.unref();
+      return discovery;
     } catch (err) {
       lastDetail = err instanceof Error ? err.message : String(err);
-      sleepSync(OWNED_POSTMASTER_POLL_MS);
+      await sleep(OWNED_POSTMASTER_POLL_MS);
     }
   }
+  started.child.unref();
   throw new Error(
     `Timed out waiting for autopg host after ${timeoutMs}ms.\n${lastDetail}\n${INSTALL_HINT}`,
   );
 }
 
-/**
- * Ensure the host postmaster is up.
- *
- * - Attaches when `autopg status --json` shows a live host (options are ignored).
- * - Otherwise starts with the given options: bare `autopg install` (pm2) by default,
- *   or `install --no-pm2 …` + detached `postmaster` when `noPm2` / `ram` is set.
- *
- * Accepts either an options object or a binary path string (legacy).
- */
-export function ensureHostRunning(optionsOrBin: EnsureHostOptions | string = {}): AutopgDiscovery {
-  const opts = normalizeEnsureHostOptions(optionsOrBin);
-  const bin = opts.bin ?? requireAutopgBin();
-
-  try {
-    return discoverHost(bin);
-  } catch {
-    // status failed — start host with the requested options
-  }
-
-  const install = spawnSync(bin, installArgsFor(opts), {
+function runInstall(bin: string, args: string[]): void {
+  const install = spawnSync(bin, args, {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -211,12 +219,32 @@ export function ensureHostRunning(optionsOrBin: EnsureHostOptions | string = {})
         `${install.stderr || install.stdout || ""}\n${INSTALL_HINT}`,
     );
   }
+}
 
-  if (usesOwnedPostmaster(opts)) {
-    startOwnedPostmaster(bin, opts);
-    return waitForHost(bin);
+/**
+ * Ensure the host postmaster is up.
+ *
+ * - Attaches when `autopg status --json` shows a live host.
+ * - Otherwise starts from {@link resolveEphemeralHostPolicy}: local pm2 `install`,
+ *   or opinionated ephemeral (`--no-pm2 --no-ui` + detached postmaster).
+ * - CI job owns ephemeral postmaster lifetime (no cedar-pg host dispose).
+ */
+export async function ensureHostRunning(bin = requireAutopgBin()): Promise<AutopgDiscovery> {
+  try {
+    return discoverHost(bin);
+  } catch {
+    // status failed — start host per policy
   }
 
+  if (resolveEphemeralHostPolicy() === "ephemeral") {
+    const recipe = ephemeralHostRecipe();
+    mkdirSync(recipe.dataDir, { recursive: true });
+    runInstall(bin, recipe.installArgs);
+    const started = startOwnedPostmaster(bin, recipe.postmasterArgs);
+    return waitForOwnedHost(bin, started);
+  }
+
+  runInstall(bin, ["install"]);
   return discoverHost(bin);
 }
 

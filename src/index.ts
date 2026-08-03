@@ -36,4 +36,4 @@ export {
   ROLE_PASSWORD_SCHEME,
   INSTALL_HINT,
 } from "./providers/autopg.ts";
-export type { AutopgDiscovery, EnsureHostOptions } from "./providers/autopg.ts";
+export type { AutopgDiscovery } from "./providers/autopg.ts";
