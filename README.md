@@ -235,21 +235,21 @@ Prefer the composite action (cache + attested binary install, no pm2). Version d
 
 See [`.github/actions/setup-autopg`](.github/actions/setup-autopg/README.md) for inputs (`version`, `cache`, `token`) and outputs.
 
-The action runs `scripts/ci-install-autopg.sh` under the hood. For published-package consumers under `CI=true` without the Action, set `CEDAR_PG_INSTALL_AUTOPG=1` so `postinstall` runs that same script (not upstream `install.sh`). Or bake the binary into the image.
+The action runs `scripts/ci-install-autopg.sh` under the hood. For published-package consumers under `CI=true` without the Action, set `CEDAR_PG_INSTALL_AUTOPG=1` so `postinstall` runs that same script (not upstream `install.sh`) — that flag alone is not enough when the package manager disables lifecycle scripts (`--ignore-scripts`, `YARN_ENABLE_SCRIPTS=false`, etc.). Prefer this Action, or bake the binary into the image.
 
 ## Env
 
-| Var                            | Meaning                                                                  |
-| ------------------------------ | ------------------------------------------------------------------------ |
-| `AUTOPG_BIN`                   | Path to autopg                                                           |
-| `AUTOPG_PG_USER` / `_PASSWORD` | Autopg superuser for admin URL (default `postgres` / `postgres`)         |
-| `CEDAR_PG=0`                   | Disable auto-ensure in adapters                                          |
-| `TEST_DATABASE_URL`            | Escape hatch: skip ensure for external DBs (not `cpg_*` / `file:`)       |
-| `CEDAR_PG_FORCE=1`             | Ignore external-URL escape hatch                                         |
-| `CEDAR_PG_EPHEMERAL_HOST`      | `1` force / `0` disable ephemeral host (auto when `CI=true`)             |
-| `CEDAR_PG_REGISTRY_DIR`        | Override global lease registry (for `gc`)                                |
-| `CEDAR_PG_SKIP_POSTINSTALL=1`  | Skip autopg install hook                                                 |
-| `CEDAR_PG_INSTALL_AUTOPG=1`    | Under `CI=true`, run binary-only `ci-install-autopg.sh` from postinstall |
+| Var                            | Meaning                                                                                                       |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `AUTOPG_BIN`                   | Path to autopg                                                                                                |
+| `AUTOPG_PG_USER` / `_PASSWORD` | Autopg superuser for admin URL (default `postgres` / `postgres`)                                              |
+| `CEDAR_PG=0`                   | Disable auto-ensure in adapters                                                                               |
+| `TEST_DATABASE_URL`            | Escape hatch: skip ensure for real external DBs (not `cpg_*` / `file:` / `{…}` / `<…>` template placeholders) |
+| `CEDAR_PG_FORCE=1`             | Ignore external-URL escape hatch (use for real external DBs / Jest when you still want ensure)                |
+| `CEDAR_PG_EPHEMERAL_HOST`      | `1` force / `0` disable ephemeral host (auto when `CI=true`)                                                  |
+| `CEDAR_PG_REGISTRY_DIR`        | Override global lease registry (for `gc`)                                                                     |
+| `CEDAR_PG_SKIP_POSTINSTALL=1`  | Skip autopg install hook                                                                                      |
+| `CEDAR_PG_INSTALL_AUTOPG=1`    | Under `CI=true`, run binary-only `ci-install-autopg.sh` from postinstall                                      |
 
 ## Alpha caveats
 

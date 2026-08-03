@@ -45,6 +45,16 @@ test("isExternalDatabaseEscapeHatch ignores file and cedarpg urls", () => {
   ).toBe(false);
 });
 
+test("isExternalDatabaseEscapeHatch ignores unset template placeholders", () => {
+  expect(
+    isExternalDatabaseEscapeHatch("postgresql://{yourMachine}@localhost:5432/leftlane_app_test"),
+  ).toBe(false);
+  expect(isExternalDatabaseEscapeHatch("postgresql://<user>:<password>@localhost:5432/app")).toBe(
+    false,
+  );
+  expect(isExternalDatabaseEscapeHatch("postgresql://real-user@localhost:5432/app")).toBe(true);
+});
+
 test("resolveEnsureSkip honors CEDAR_PG disable from env", () => {
   withEnv({ CEDAR_PG: "0", TEST_DATABASE_URL: undefined }, () => {
     expect(resolveEnsureSkip()).toEqual({ skip: true, reason: "disabled" });
@@ -95,6 +105,15 @@ test("resolveEnsureSkip force overrides escape hatch", () => {
       disabled: false,
       force: true,
       url: "postgresql://external/db",
+    }),
+  ).toEqual({ skip: false });
+});
+
+test("resolveEnsureSkip does not treat template placeholder URLs as escape hatch", () => {
+  expect(
+    resolveEnsureSkip({
+      disabled: false,
+      url: "postgresql://{yourMachine}@localhost:5432/leftlane_app_test",
     }),
   ).toEqual({ skip: false });
 });
