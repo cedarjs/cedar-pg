@@ -111,6 +111,19 @@ function quoteLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+async function withAdminClient<T>(
+  adminUrl: string,
+  fn: (client: pg.Client) => Promise<T>,
+): Promise<T> {
+  const client = new pg.Client({ connectionString: adminUrl });
+  await client.connect();
+  try {
+    return await fn(client);
+  } finally {
+    await client.end();
+  }
+}
+
 /**
  * Deterministic local-only password for an app role (Prisma/TCP need it;
  * autopg hba uses `password` for 127.0.0.1).
@@ -135,9 +148,7 @@ export async function ensureDatabase(opts: {
   password?: string;
 }): Promise<void> {
   const password = opts.password ?? rolePasswordFor(opts.roleName);
-  const client = new pg.Client({ connectionString: opts.adminUrl });
-  await client.connect();
-  try {
+  await withAdminClient(opts.adminUrl, async (client) => {
     const roleExists = await client.query("SELECT 1 FROM pg_roles WHERE rolname = $1", [
       opts.roleName,
     ]);
@@ -163,9 +174,7 @@ export async function ensureDatabase(opts: {
         `ALTER DATABASE ${quoteIdent(opts.databaseName)} OWNER TO ${quoteIdent(opts.roleName)}`,
       );
     }
-  } finally {
-    await client.end();
-  }
+  });
 }
 
 /**
@@ -177,14 +186,10 @@ export async function setDatabaseIsTemplate(opts: {
   databaseName: string;
   isTemplate: boolean;
 }): Promise<void> {
-  const client = new pg.Client({ connectionString: opts.adminUrl });
-  await client.connect();
-  try {
-    const flag = opts.isTemplate ? "true" : "false";
+  const flag = opts.isTemplate ? "true" : "false";
+  await withAdminClient(opts.adminUrl, async (client) => {
     await client.query(`ALTER DATABASE ${quoteIdent(opts.databaseName)} WITH IS_TEMPLATE ${flag}`);
-  } finally {
-    await client.end();
-  }
+  });
 }
 
 /**
@@ -197,9 +202,7 @@ export async function cloneDatabaseFromTemplate(opts: {
   databaseName: string;
   roleName: string;
 }): Promise<void> {
-  const client = new pg.Client({ connectionString: opts.adminUrl });
-  await client.connect();
-  try {
+  await withAdminClient(opts.adminUrl, async (client) => {
     const exists = await client.query("SELECT 1 FROM pg_database WHERE datname = $1", [
       opts.databaseName,
     ]);
@@ -209,9 +212,7 @@ export async function cloneDatabaseFromTemplate(opts: {
     await client.query(
       `CREATE DATABASE ${quoteIdent(opts.databaseName)} WITH TEMPLATE ${quoteIdent(opts.templateName)} OWNER ${quoteIdent(opts.roleName)}`,
     );
-  } finally {
-    await client.end();
-  }
+  });
 }
 
 /** Datnames owned by role (for dispose/GC of TEMPLATE clones). */
@@ -219,9 +220,7 @@ export async function listDatabasesOwnedByRole(opts: {
   adminUrl: string;
   roleName: string;
 }): Promise<string[]> {
-  const client = new pg.Client({ connectionString: opts.adminUrl });
-  await client.connect();
-  try {
+  return withAdminClient(opts.adminUrl, async (client) => {
     const result = await client.query<{ datname: string }>(
       `SELECT datname FROM pg_database
        WHERE datdba = (SELECT oid FROM pg_roles WHERE rolname = $1)
@@ -229,9 +228,7 @@ export async function listDatabasesOwnedByRole(opts: {
       [opts.roleName],
     );
     return result.rows.map((r) => r.datname);
-  } finally {
-    await client.end();
-  }
+  });
 }
 
 /**
@@ -243,9 +240,7 @@ export async function dropDatabase(opts: {
   databaseName: string;
   roleName: string;
 }): Promise<void> {
-  const client = new pg.Client({ connectionString: opts.adminUrl });
-  await client.connect();
-  try {
+  await withAdminClient(opts.adminUrl, async (client) => {
     const db = await client.query<{ datistemplate: boolean }>(
       `SELECT datistemplate FROM pg_database WHERE datname = $1`,
       [opts.databaseName],
@@ -273,9 +268,7 @@ export async function dropDatabase(opts: {
     if (owns.rowCount === 0) {
       await client.query(`DROP ROLE IF EXISTS ${quoteIdent(opts.roleName)}`);
     }
-  } finally {
-    await client.end();
-  }
+  });
 }
 
 export function buildDatabaseUrl(opts: {

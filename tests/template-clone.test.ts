@@ -88,7 +88,9 @@ test("markTemplate + cloneFromTemplate use admin and lease role password", async
     const { markTemplate, cloneFromTemplate, buildDatabaseUrl, rolePasswordFor } =
       await import("../src/index.ts");
 
-    await expect(markTemplate({ root, mode: "test" })).resolves.toEqual({
+    await expect(
+      markTemplate({ root, mode: "test", databaseName: templateName, adminUrl }),
+    ).resolves.toEqual({
       databaseName: templateName,
     });
     expect(setTemplate).toHaveBeenCalledWith({
@@ -135,7 +137,7 @@ test("markTemplate + cloneFromTemplate use admin and lease role password", async
   }
 });
 
-test("dispose dropOwnedDatabases drops clones then template via admin", async () => {
+test("dispose drops clones then template via admin (role-owned DBs)", async () => {
   const registry = mkdtempSync(join(tmpdir(), "cedarpg-reg-"));
   const root = mkdtempSync(join(tmpdir(), "cedarpg-wt-"));
   const prev = process.env.CEDAR_PG_REGISTRY_DIR;
@@ -169,7 +171,7 @@ test("dispose dropOwnedDatabases drops clones then template via admin", async ()
 
   try {
     const { dispose } = await import("../src/core/lifecycle.ts");
-    const result = await dispose({ root, mode: "test", dropOwnedDatabases: true });
+    const result = await dispose({ root, mode: "test" });
 
     expect(result).toEqual({
       dropped: true,
@@ -190,7 +192,7 @@ test("dispose dropOwnedDatabases drops clones then template via admin", async ()
   }
 });
 
-test("dispose without dropOwnedDatabases still returns droppedDatabases", async () => {
+test("dispose with only the leased DB still lists owned then drops", async () => {
   const registry = mkdtempSync(join(tmpdir(), "cedarpg-reg-"));
   const root = mkdtempSync(join(tmpdir(), "cedarpg-wt-"));
   const prev = process.env.CEDAR_PG_REGISTRY_DIR;
@@ -201,10 +203,11 @@ test("dispose without dropOwnedDatabases still returns droppedDatabases", async 
   const lease = makeLease({ root, databaseName: templateName });
   writeLease(lease);
 
-  const dropDb = vi.fn(async () => {});
-  const listOwned = vi.fn(async () => {
-    throw new Error("should not list owned when dropOwnedDatabases is false");
+  const droppedNames: string[] = [];
+  const dropDb = vi.fn(async (opts: { databaseName: string }) => {
+    droppedNames.push(opts.databaseName);
   });
+  const listOwned = vi.fn(async () => [templateName]);
 
   vi.resetModules();
   vi.doMock("../src/providers/autopg.ts", async () => {
@@ -226,8 +229,8 @@ test("dispose without dropOwnedDatabases still returns droppedDatabases", async 
       databaseName: templateName,
       droppedDatabases: [templateName],
     });
-    expect(listOwned).not.toHaveBeenCalled();
-    expect(dropDb).toHaveBeenCalledTimes(1);
+    expect(listOwned).toHaveBeenCalledOnce();
+    expect(droppedNames).toEqual([templateName]);
   } finally {
     vi.doUnmock("../src/providers/autopg.ts");
     vi.resetModules();

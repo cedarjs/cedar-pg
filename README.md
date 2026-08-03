@@ -249,12 +249,12 @@ await markTemplate(ensured);
 const worker = await cloneFromTemplate({ name: process.env.JEST_WORKER_ID ?? "1" });
 // worker.databaseUrl — same role credentials; adminUrl for privileged DDL if needed
 
-await dispose({ mode: "test", dropOwnedDatabases: true });
+await dispose({ mode: "test" }); // drops TEMPLATE + all clones owned by the test role
 ```
 
 `ensure` returns `adminUrl` so apps do not re-derive `postgresql://postgres:postgres@127.0.0.1:<port>/postgres`.
 `cloneFromTemplate` uses the admin connection internally (`CREATE DATABASE … TEMPLATE`); test roles stay `LOGIN`-only.
-`dispose({ dropOwnedDatabases: true })` unsets `IS_TEMPLATE` and drops every DB owned by the test role (template + clones).
+`dispose` unsets `IS_TEMPLATE` and drops every DB owned by the test role (template + clones).
 
 ## Env
 
@@ -278,4 +278,4 @@ await dispose({ mode: "test", dropOwnedDatabases: true });
   (ephemeral cold-start when the runner has no live host; attach-wins otherwise).
 - State lives in product-owned `.cedarpg` (worktree + `~/.cedarpg/registry`), not under autopg's `~/.autopg/` or a generic `.pg`.
 - Role passwords are derived from `roleName` (`cedar-pg\\0` + roleName, scheme v2) so TEMPLATE clones that reuse a role keep working; bump the scheme id to change the derivation.
-- Test TEMPLATE flow: `ensure` returns `adminUrl`; `markTemplate` / `cloneFromTemplate` / `dispose({ dropOwnedDatabases: true })` own migrate-once worker isolation.
+- Test TEMPLATE flow: `ensure` returns `adminUrl`; `markTemplate` / `cloneFromTemplate` / `dispose` own migrate-once worker isolation (dispose drops role-owned DBs).

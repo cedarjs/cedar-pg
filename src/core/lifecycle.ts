@@ -38,43 +38,24 @@ export function urlFromLease(lease: Lease): string {
 }
 
 /**
- * DROP databases then forget lease/registry. Never forget without successful DROP(s).
- * With `dropOwnedDatabases`, drops every DB owned by the lease role (TEMPLATE clones),
- * unsetting `IS_TEMPLATE` inside each drop.
+ * DROP every DB owned by the lease role (TEMPLATE + clones), then forget lease.
+ * Unsets `IS_TEMPLATE` inside each drop. Never forget without successful DROP(s).
  */
-async function dropThenForget(
-  lease: Lease,
-  adminUrl: string,
-  options: { dropOwnedDatabases?: boolean } = {},
-): Promise<string[]> {
+async function dropThenForget(lease: Lease, adminUrl: string): Promise<string[]> {
+  const owned = await listDatabasesOwnedByRole({
+    adminUrl,
+    roleName: lease.roleName,
+  });
+  const ordered = [...owned.filter((name) => name !== lease.databaseName), lease.databaseName];
   const dropped: string[] = [];
-
-  if (options.dropOwnedDatabases) {
-    const owned = await listDatabasesOwnedByRole({
-      adminUrl,
-      roleName: lease.roleName,
-    });
-    const ordered = [...owned.filter((name) => name !== lease.databaseName), lease.databaseName];
-    const seen = new Set<string>();
-    for (const databaseName of ordered) {
-      if (seen.has(databaseName)) continue;
-      seen.add(databaseName);
-      await dropDatabase({
-        adminUrl,
-        databaseName,
-        roleName: lease.roleName,
-      });
-      dropped.push(databaseName);
-    }
-  } else {
+  for (const databaseName of ordered) {
     await dropDatabase({
       adminUrl,
-      databaseName: lease.databaseName,
+      databaseName,
       roleName: lease.roleName,
     });
-    dropped.push(lease.databaseName);
+    dropped.push(databaseName);
   }
-
   forgetLease(lease);
   return dropped;
 }
@@ -215,34 +196,19 @@ export type MarkTemplateOptions = {
 
 /**
  * After migrations, mark the ensured DB as a PostgreSQL TEMPLATE so workers can clone it.
- * Accepts an `EnsureResult` (or partial) or resolves from the worktree lease.
+ * Pass fields from `EnsureResult` (`databaseName` + `adminUrl`) or resolve from the lease.
  */
 export async function markTemplate(
-  target: MarkTemplateOptions | Pick<EnsureResult, "databaseName" | "adminUrl"> = {},
+  options: MarkTemplateOptions = {},
 ): Promise<{ databaseName: string }> {
-  let databaseName: string;
-  let adminUrl: string;
-
-  if ("adminUrl" in target && target.adminUrl && "databaseName" in target && target.databaseName) {
-    databaseName = target.databaseName;
-    adminUrl = target.adminUrl;
-  } else {
-    const opts = target as MarkTemplateOptions;
-    const identity = resolveWorktreeIdentity(opts.root);
-    const mode = opts.mode ?? "test";
-    const lease = readLease(identity.root, mode);
-    const resolvedName = opts.databaseName ?? lease?.databaseName;
-    if (!resolvedName) {
-      throw new Error(`no ${mode} lease; run ensure before markTemplate`);
-    }
-    databaseName = resolvedName;
-    if (opts.adminUrl) {
-      adminUrl = opts.adminUrl;
-    } else {
-      adminUrl = (await ensureHostRunning()).adminUrl;
-    }
+  const identity = resolveWorktreeIdentity(options.root);
+  const mode = options.mode ?? "test";
+  const lease = readLease(identity.root, mode);
+  const databaseName = options.databaseName ?? lease?.databaseName;
+  if (!databaseName) {
+    throw new Error(`no ${mode} lease; run ensure before markTemplate`);
   }
-
+  const adminUrl = options.adminUrl ?? (await ensureHostRunning()).adminUrl;
   await setDatabaseIsTemplate({ adminUrl, databaseName, isTemplate: true });
   return { databaseName };
 }
@@ -327,11 +293,6 @@ export async function cloneFromTemplate(
 export type DisposeOptions = {
   root?: string;
   mode?: DbMode;
-  /**
-   * Also DROP every database owned by the lease role (TEMPLATE clones),
-   * unsetting `IS_TEMPLATE` as needed. Use after migrate-once + clone harnesses.
-   */
-  dropOwnedDatabases?: boolean;
 };
 
 export type DisposeResult =
@@ -339,8 +300,8 @@ export type DisposeResult =
   | { dropped: false; reason: "no-lease" | "host-unavailable" };
 
 /**
- * DROP the worktree database for the given mode (default: test).
- * No-ops without a valid lease (never invents a name to DROP).
+ * DROP every database owned by the lease role (TEMPLATE + clones), then forget the lease.
+ * Unsets `IS_TEMPLATE` as needed. No-ops without a valid lease (never invents a DROP target).
  * If the host is unavailable, leaves the lease so dispose/gc can retry.
  */
 export async function dispose(options: DisposeOptions = {}): Promise<DisposeResult> {
@@ -357,9 +318,7 @@ export async function dispose(options: DisposeOptions = {}): Promise<DisposeResu
     return { dropped: false, reason: "host-unavailable" };
   }
 
-  const droppedDatabases = await dropThenForget(lease, host.adminUrl, {
-    dropOwnedDatabases: options.dropOwnedDatabases,
-  });
+  const droppedDatabases = await dropThenForget(lease, host.adminUrl);
   return {
     dropped: true,
     databaseName: lease.databaseName,
@@ -369,8 +328,7 @@ export async function dispose(options: DisposeOptions = {}): Promise<DisposeResu
 
 /**
  * Drop databases whose registered worktree root no longer exists on disk.
- * Registry entries are removed only after a successful DROP.
- * Orphan GC always drops owned DBs (templates + clones) for the lease role.
+ * Registry entries are removed only after a successful DROP (owned DBs + lease DB).
  */
 export async function gc(): Promise<{
   dropped: string[];
@@ -388,9 +346,7 @@ export async function gc(): Promise<{
 
   for (const lease of orphans) {
     try {
-      const names = await dropThenForget(lease, host.adminUrl, {
-        dropOwnedDatabases: true,
-      });
+      const names = await dropThenForget(lease, host.adminUrl);
       dropped.push(...names);
     } catch {
       // Keep registry entry for retry
