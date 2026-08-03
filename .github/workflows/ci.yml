@@ -26,6 +26,11 @@ jobs:
 
       - run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
+      # Cache miss / fresh runner: postinstall skips under CI unless forced.
+      - run: node scripts/postinstall.js
+        env:
+          CEDAR_PG_INSTALL_AUTOPG: "1"
+
       - run: vp check
       - run: vp test
       - run: vp run smoke
