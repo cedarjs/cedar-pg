@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
+import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discoverHost, INSTALL_HINT, requireAutopgBin, type AutopgDiscovery } from "./autopg.ts";
@@ -10,6 +11,7 @@ export type HostStartPolicy = "local" | "ephemeral";
 /** Opinionated install + postmaster argv for CI / ephemeral runners. */
 export type EphemeralHostRecipe = {
   dataDir: string;
+  port: number;
   installArgs: string[];
   postmasterArgs: string[];
 };
@@ -20,7 +22,11 @@ export type EphemeralRecipeContext = {
   shmAvailable?: boolean;
   tmpDir?: string;
   uid?: number;
+  port?: number;
 };
+
+/** Fixed CI TCP port so install registration and postmaster listen on the same port. */
+const EPHEMERAL_PORT = 55432;
 
 const OWNED_POSTMASTER_READY_MS = 30_000;
 const OWNED_POSTMASTER_POLL_MS = 200;
@@ -42,24 +48,33 @@ export function resolveEphemeralHostPolicy(env: NodeJS.ProcessEnv = process.env)
 }
 
 /**
- * Fixed CI recipe: `install --no-pm2 --no-ui --data DIR` + detached
- * `postmaster` (`--ram` + `/dev/shm/cedar-pg-<uid>` on Linux when shm exists).
+ * Fixed CI recipe: shared `--port` on install + postmaster, `--no-pm2 --no-ui`,
+ * and `--ram` + `/dev/shm/cedar-pg-<uid>` on Linux when shm exists.
  */
 export function ephemeralHostRecipe(ctx: EphemeralRecipeContext = {}): EphemeralHostRecipe {
   const platform = ctx.platform ?? process.platform;
   const shmAvailable = ctx.shmAvailable ?? (platform === "linux" && existsSync("/dev/shm"));
   const uid = ctx.uid ?? process.getuid?.() ?? 0;
+  const port = ctx.port ?? EPHEMERAL_PORT;
   const useRam = platform === "linux" && shmAvailable;
   const dataDir = useRam
     ? `/dev/shm/cedar-pg-${uid}`
     : join(ctx.tmpDir ?? tmpdir(), "cedar-pg-host");
 
-  const installArgs = ["install", "--no-pm2", "--no-ui", "--data", dataDir];
-  const postmasterArgs = useRam
-    ? ["postmaster", "--ram", "--socket-dir", dataDir]
-    : ["postmaster", "--socket-dir", dataDir, "--data", dataDir];
+  const installArgs = ["install", "--no-pm2", "--no-ui", "--port", String(port), "--data", dataDir];
+  // Always pass --port/--data/--socket-dir so postmaster matches the install record.
+  const postmasterArgs = [
+    "postmaster",
+    ...(useRam ? ["--ram"] : []),
+    "--port",
+    String(port),
+    "--socket-dir",
+    dataDir,
+    "--data",
+    dataDir,
+  ];
 
-  return { dataDir, installArgs, postmasterArgs };
+  return { dataDir, port, installArgs, postmasterArgs };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -79,9 +94,25 @@ function runInstall(bin: string, args: string[]): void {
   }
 }
 
+/** True when something accepts TCP on 127.0.0.1:port (postmaster live, not just admin.json). */
+function canConnect(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection({ host: "127.0.0.1", port }, () => {
+      socket.end();
+      resolve(true);
+    });
+    socket.on("error", () => {
+      resolve(false);
+    });
+  });
+}
+
 /**
  * Install + detached postmaster with fully ignored stdio so the CI job owns lifetime
  * (caller exit must not close pipes under the daemon).
+ *
+ * Readiness is TCP accept on the recipe port — not `autopg status`, which succeeds
+ * after `install --no-pm2` before postmaster is listening.
  */
 async function startEphemeralHost(bin: string): Promise<AutopgDiscovery> {
   const recipe = ephemeralHostRecipe();
@@ -106,27 +137,27 @@ async function startEphemeralHost(bin: string): Promise<AutopgDiscovery> {
   });
 
   const deadline = Date.now() + OWNED_POSTMASTER_READY_MS;
-  let lastDetail = "host not ready";
+  let lastDetail = "TCP not accepting";
   while (Date.now() < deadline) {
     if (state.spawnError) {
+      child.unref();
       throw new Error(
         `Failed to spawn autopg postmaster.\n${state.spawnError.message}\n${INSTALL_HINT}`,
       );
     }
     if (state.exit) {
+      child.unref();
       throw new Error(
         `autopg postmaster exited before ready (code=${state.exit.code}, signal=${state.exit.signal}).\n` +
           INSTALL_HINT,
       );
     }
-    try {
-      const discovery = discoverHost(bin);
+    if (await canConnect(recipe.port)) {
       child.unref();
-      return discovery;
-    } catch (err) {
-      lastDetail = err instanceof Error ? err.message : String(err);
-      await sleep(OWNED_POSTMASTER_POLL_MS);
+      return discoverHost(bin);
     }
+    lastDetail = `127.0.0.1:${recipe.port} not accepting connections`;
+    await sleep(OWNED_POSTMASTER_POLL_MS);
   }
 
   child.unref();
