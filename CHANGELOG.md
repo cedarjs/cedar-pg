@@ -11,6 +11,7 @@ Initial alpha of **cedar-pg**, published on npm as `@cedarjs/pg` (CLI: `cedarpg`
 - Public exports: `STATE_DIRNAME`, `loadTestEnv` for framework hosts (avoid hardcoding `.cedarpg`)
 - CI: `vp run smoke:pg` runs Vitest + Jest against real Postgres (ephemeral when no host is live)
 - Single autopg pin in `scripts/autopg-version`; CI uses binary-only `ci-install-autopg.sh` (no pm2)
+- Composite Action `.github/actions/setup-autopg` (cache + install) for this repo’s CI; reusable from other repos before a public tag
 
 - Registry-backed `gc` for orphan worktrees; lease-gated dispose (drop-then-forget)
 - `ensureIfNeeded` policy with external-URL escape hatch
