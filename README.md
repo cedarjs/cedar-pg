@@ -133,17 +133,65 @@ const { databaseUrl, databaseName, dispose: drop } = await ensure({ mode: "test"
 await drop();
 ```
 
+### Host startup (CI ephemeral)
+
+By default cedar-pg **attaches** to a live autopg host (`autopg status`). If none is live it runs bare `autopg install` (pm2) — fine for local machines, hostile to GitHub Actions (no pm2) and slower than RAM-backed CI.
+
+In CI, cedar-pg starts an **opinionated ephemeral host** automatically when `CI=true` (or when forced). Callers just use `ensure` — no host options bag:
+
+```ts
+import { ensure } from "@cedarjs/pg";
+
+// CI=true → install --no-pm2 --no-ui + detached postmaster (--ram on Linux /dev/shm)
+const { databaseUrl } = await ensure({ mode: "test" });
+```
+
+| Signal                      | Effect                                               |
+| --------------------------- | ---------------------------------------------------- |
+| `CEDAR_PG_EPHEMERAL_HOST=1` | Force owned ephemeral host                           |
+| `CEDAR_PG_EPHEMERAL_HOST=0` | Force local attach / pm2 install (even if `CI=true`) |
+| unset + `CI=true`           | Auto ephemeral                                       |
+| otherwise                   | Local: attach if live, else bare `autopg install`    |
+
+Ephemeral recipe (not configurable via cedar-pg):
+
+- `autopg install --no-pm2 --no-ui --port 55432 --data DIR`
+- detached `autopg postmaster --port 55432 --socket-dir DIR --data DIR`
+- Linux when `/dev/shm` exists → also `--ram` and `DIR=/dev/shm/cedar-pg-<uid>`
+- otherwise → disk `DIR` under the OS temp dir (still owned, no pm2)
+- Ready when TCP accepts on the recipe port (not merely `autopg status` after install)
+
+If a host is already live, cedar-pg attaches and does not start another. The **CI job owns** ephemeral postmaster lifetime (runner teardown / `/dev/shm`); there is no cedar-pg host dispose API.
+
+### CI caching (GitHub Actions)
+
+Pin the autopg version (this package’s `postinstall` already pins a release tag — currently `v3.0.7`). Cache the binary tree so cold jobs skip the ~155MB download:
+
+```yaml
+- uses: actions/cache@v4
+  with:
+    path: |
+      ~/.local/share/autopg
+      ~/.local/bin/autopg
+    key: autopg-v3.0.7-${{ runner.os }}
+- run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+```
+
+Set `CEDAR_PG_INSTALL_AUTOPG=1` so `postinstall` still fetches autopg when the cache misses under `CI=true`. Or bake the binary into the image.
+
 ## Env
 
-| Var                           | Meaning                                                            |
-| ----------------------------- | ------------------------------------------------------------------ |
-| `AUTOPG_BIN`                  | Path to autopg                                                     |
-| `CEDAR_PG=0`                  | Disable auto-ensure in adapters                                    |
-| `TEST_DATABASE_URL`           | Escape hatch: skip ensure for external DBs (not `cpg_*` / `file:`) |
-| `CEDAR_PG_FORCE=1`            | Ignore external-URL escape hatch                                   |
-| `CEDAR_PG_REGISTRY_DIR`       | Override global lease registry (for `gc`)                          |
-| `CEDAR_PG_SKIP_POSTINSTALL=1` | Skip autopg install hook                                           |
-| `CEDAR_PG_INSTALL_AUTOPG=1`   | Force autopg install in CI                                         |
+| Var                            | Meaning                                                            |
+| ------------------------------ | ------------------------------------------------------------------ |
+| `AUTOPG_BIN`                   | Path to autopg                                                     |
+| `AUTOPG_PG_USER` / `_PASSWORD` | Autopg superuser for admin URL (default `postgres` / `postgres`)   |
+| `CEDAR_PG=0`                   | Disable auto-ensure in adapters                                    |
+| `TEST_DATABASE_URL`            | Escape hatch: skip ensure for external DBs (not `cpg_*` / `file:`) |
+| `CEDAR_PG_FORCE=1`             | Ignore external-URL escape hatch                                   |
+| `CEDAR_PG_EPHEMERAL_HOST`      | `1` force / `0` disable ephemeral host (auto when `CI=true`)       |
+| `CEDAR_PG_REGISTRY_DIR`        | Override global lease registry (for `gc`)                          |
+| `CEDAR_PG_SKIP_POSTINSTALL=1`  | Skip autopg install hook                                           |
+| `CEDAR_PG_INSTALL_AUTOPG=1`    | Force autopg install in CI                                         |
 
 ## Alpha caveats
 

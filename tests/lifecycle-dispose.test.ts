@@ -39,15 +39,23 @@ test("dispose leaves lease+registry when host is unavailable", async () => {
   process.env.CEDAR_PG_REGISTRY_DIR = registry;
 
   vi.resetModules();
-  vi.doMock("../src/providers/autopg.ts", async () => {
-    const actual = await vi.importActual<typeof import("../src/providers/autopg.ts")>(
-      "../src/providers/autopg.ts",
+  vi.doMock("../src/providers/host.ts", async () => {
+    const actual = await vi.importActual<typeof import("../src/providers/host.ts")>(
+      "../src/providers/host.ts",
     );
     return {
       ...actual,
       ensureHostRunning: () => {
         throw new Error("autopg down");
       },
+    };
+  });
+  vi.doMock("../src/providers/autopg.ts", async () => {
+    const actual = await vi.importActual<typeof import("../src/providers/autopg.ts")>(
+      "../src/providers/autopg.ts",
+    );
+    return {
+      ...actual,
       dropDatabase: vi.fn(),
     };
   });
@@ -71,6 +79,7 @@ test("dispose leaves lease+registry when host is unavailable", async () => {
     expect(listRegistryLeases().map((l) => l.databaseName)).toContain(lease.databaseName);
     expect(autopg.dropDatabase).not.toHaveBeenCalled();
   } finally {
+    vi.doUnmock("../src/providers/host.ts");
     vi.doUnmock("../src/providers/autopg.ts");
     vi.resetModules();
     if (prev === undefined) delete process.env.CEDAR_PG_REGISTRY_DIR;

@@ -67,8 +67,22 @@ export function parseHostStatus(json: string): { port: number } {
   return { port: parsed.port };
 }
 
-function adminUrlFor(port: number): string {
-  return `postgresql://postgres:postgres@127.0.0.1:${port}/postgres`;
+/**
+ * Admin URL for an autopg host on `port`.
+ *
+ * Credentials follow autopg's own defaults / env chain (not "any local Postgres"):
+ * - user: `AUTOPG_PG_USER` / `PGSERVE_PG_USER` / `postgres`
+ * - password: `AUTOPG_PG_PASSWORD` / `PGSERVE_PG_PASSWORD` / `postgres`
+ *
+ * Port is never scanned: callers pass the port from `autopg status` (attach) or the
+ * ephemeral recipe (`55432`). That keeps us off unrelated local servers (e.g. brew on 5432).
+ */
+export function adminUrlFor(port: number, env: NodeJS.ProcessEnv = process.env): string {
+  const user = encodeURIComponent(env.AUTOPG_PG_USER || env.PGSERVE_PG_USER || "postgres");
+  const password = encodeURIComponent(
+    env.AUTOPG_PG_PASSWORD || env.PGSERVE_PG_PASSWORD || "postgres",
+  );
+  return `postgresql://${user}:${password}@127.0.0.1:${port}/postgres`;
 }
 
 /**
@@ -87,29 +101,6 @@ export function discoverHost(bin = requireAutopgBin()): AutopgDiscovery {
   }
   const { port } = parseHostStatus(status);
   return { port, adminUrl: adminUrlFor(port), bin };
-}
-
-/**
- * Ensure the host postmaster is up. Runs `autopg install` only after status fails, then re-discovers.
- */
-export function ensureHostRunning(bin = requireAutopgBin()): AutopgDiscovery {
-  try {
-    return discoverHost(bin);
-  } catch {
-    // status failed — attempt install, then require a successful rediscovery
-  }
-
-  const install = spawnSync(bin, ["install"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (install.status !== 0) {
-    throw new Error(
-      `Failed to start autopg host (exit ${install.status}).\n` +
-        `${install.stderr || install.stdout || ""}\n${INSTALL_HINT}`,
-    );
-  }
-  return discoverHost(bin);
 }
 
 function quoteIdent(name: string): string {
