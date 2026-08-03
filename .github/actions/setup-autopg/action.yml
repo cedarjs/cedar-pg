@@ -1,0 +1,79 @@
+name: Setup autopg
+description: >
+  Install the attested autopg binary (no pm2) with optional caching.
+  Intended for CI that uses @cedarjs/pg / cedar-pg.
+author: CedarJS
+
+branding:
+  icon: database
+  color: blue
+
+inputs:
+  version:
+    description: >
+      autopg release tag (e.g. v3.0.7). When unset, reads scripts/autopg-version
+      from this action's repository (the cedar-pg pin).
+    required: false
+    default: ""
+  cache:
+    description: Cache ~/.local/share/autopg and ~/.local/bin/autopg
+    required: false
+    default: "true"
+  token:
+    description: GitHub token for gh attestation verify
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  version:
+    description: Resolved autopg version tag
+    value: ${{ steps.resolve.outputs.version }}
+  cache-hit:
+    description: Whether the Actions cache restored a hit (empty when cache=false)
+    value: ${{ steps.cache.outputs.cache-hit }}
+  bin:
+    description: Path to the autopg binary
+    value: ${{ steps.install.outputs.bin }}
+
+runs:
+  using: composite
+  steps:
+    - id: resolve
+      shell: bash
+      run: |
+        set -euo pipefail
+        ACTION_ROOT="$(cd "${{ github.action_path }}/../../.." && pwd)"
+        if [ -n "${{ inputs.version }}" ]; then
+          VER="${{ inputs.version }}"
+        else
+          VER="$(tr -d '[:space:]' <"${ACTION_ROOT}/scripts/autopg-version")"
+        fi
+        {
+          echo "version=${VER}"
+          echo "action_root=${ACTION_ROOT}"
+        } >>"$GITHUB_OUTPUT"
+        echo "[setup-autopg] version=${VER}"
+
+    - id: cache
+      if: inputs.cache == 'true'
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.local/share/autopg
+          ~/.local/bin/autopg
+        key: autopg-${{ steps.resolve.outputs.version }}-${{ runner.os }}-${{ runner.arch }}
+
+    - shell: bash
+      run: echo "${HOME}/.local/bin" >>"$GITHUB_PATH"
+
+    - id: install
+      shell: bash
+      env:
+        AUTOPG_VERSION: ${{ steps.resolve.outputs.version }}
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+        bash "${{ steps.resolve.outputs.action_root }}/scripts/ci-install-autopg.sh"
+        BIN="${HOME}/.local/bin/autopg"
+        echo "bin=${BIN}" >>"$GITHUB_OUTPUT"
+        echo "[setup-autopg] bin=${BIN}"
