@@ -28,7 +28,7 @@ test("ensureIfNeeded skips disabled without touching host", async () => {
   });
 });
 
-test("ensureIfNeeded skips external url and sets DATABASE_URL", async () => {
+test("ensureIfNeeded skips external url and sets DATABASE_URL + TEST_DATABASE_URL", async () => {
   const external = "postgresql://neon.example/db";
   await withEnv(
     {
@@ -50,6 +50,7 @@ test("ensureIfNeeded skips external url and sets DATABASE_URL", async () => {
         databaseUrl: external,
       });
       expect(process.env.DATABASE_URL).toBe(external);
+      expect(process.env.TEST_DATABASE_URL).toBe(external);
     },
   );
 });

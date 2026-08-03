@@ -104,10 +104,9 @@ test("markTemplate + cloneFromTemplate use admin and lease role password", async
         const { markTemplate, cloneFromTemplate, buildDatabaseUrl, rolePasswordFor } =
           await import("../src/index.ts");
 
-        await expect(
-          markTemplate({ root, mode: "test", databaseName: templateName, adminUrl }),
-        ).resolves.toEqual({
+        await expect(markTemplate({ root, mode: "test", adminUrl })).resolves.toEqual({
           databaseName: templateName,
+          adminUrl,
         });
         expect(setTemplate).toHaveBeenCalledWith({
           adminUrl,
@@ -242,5 +241,95 @@ test("dispose with only the leased DB still lists owned then drops", async () =>
     else process.env.CEDAR_PG_REGISTRY_DIR = prev;
     rmSync(registry, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("dispose drops only role-owned DBs (never invents lease datname)", async () => {
+  const registry = mkdtempSync(join(tmpdir(), "cedarpg-reg-"));
+  const root = mkdtempSync(join(tmpdir(), "cedarpg-wt-"));
+  const prev = process.env.CEDAR_PG_REGISTRY_DIR;
+  process.env.CEDAR_PG_REGISTRY_DIR = registry;
+
+  const adminUrl = "postgresql://postgres:postgres@127.0.0.1:5433/postgres";
+  const templateName = "cpg_cedar_main_test_gone0001";
+  const lease = makeLease({ root, databaseName: templateName });
+  writeLease(lease);
+
+  const cloneOnly = `${templateName}_c_1`;
+  const droppedNames: string[] = [];
+  const dropDb = vi.fn(async (opts: { databaseName: string }) => {
+    droppedNames.push(opts.databaseName);
+  });
+  const listOwned = vi.fn(async () => [cloneOnly]);
+
+  try {
+    await withHostAndAutopgMocks(
+      adminUrl,
+      {
+        listDatabasesOwnedByRole: listOwned,
+        dropDatabase: dropDb,
+      },
+      async () => {
+        const { dispose } = await import("../src/core/lifecycle.ts");
+        await expect(dispose({ root, mode: "test" })).resolves.toEqual({
+          dropped: true,
+          databaseName: templateName,
+          droppedDatabases: [cloneOnly],
+        });
+        expect(droppedNames).toEqual([cloneOnly]);
+        expect(readLease(root, "test")).toBeNull();
+      },
+    );
+  } finally {
+    if (prev === undefined) delete process.env.CEDAR_PG_REGISTRY_DIR;
+    else process.env.CEDAR_PG_REGISTRY_DIR = prev;
+    rmSync(registry, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("markTemplate requires a lease", async () => {
+  const registry = mkdtempSync(join(tmpdir(), "cedarpg-reg-"));
+  const root = mkdtempSync(join(tmpdir(), "cedarpg-wt-"));
+  const prev = process.env.CEDAR_PG_REGISTRY_DIR;
+  process.env.CEDAR_PG_REGISTRY_DIR = registry;
+
+  vi.resetModules();
+  try {
+    const { markTemplate } = await import("../src/core/lifecycle.ts");
+    await expect(markTemplate({ root, mode: "test" })).rejects.toThrow(/no test lease/);
+  } finally {
+    vi.resetModules();
+    if (prev === undefined) delete process.env.CEDAR_PG_REGISTRY_DIR;
+    else process.env.CEDAR_PG_REGISTRY_DIR = prev;
+    rmSync(registry, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cloneFromTemplateIfNeeded external-url skip shares applyDatabaseUrlEnv", async () => {
+  const prevCedar = process.env.CEDAR_PG;
+  const prevUrl = process.env.TEST_DATABASE_URL;
+  const prevDb = process.env.DATABASE_URL;
+  delete process.env.CEDAR_PG;
+  process.env.TEST_DATABASE_URL = "postgresql://ci:ci@db.example/app";
+
+  try {
+    const { cloneFromTemplateIfNeeded } = await import("../src/core/lifecycle.ts");
+    const result = await cloneFromTemplateIfNeeded({ mode: "test", setEnv: true });
+    expect(result).toEqual({
+      status: "skipped",
+      reason: "external-url",
+      databaseUrl: "postgresql://ci:ci@db.example/app",
+    });
+    expect(process.env.DATABASE_URL).toBe("postgresql://ci:ci@db.example/app");
+    expect(process.env.TEST_DATABASE_URL).toBe("postgresql://ci:ci@db.example/app");
+  } finally {
+    if (prevCedar === undefined) delete process.env.CEDAR_PG;
+    else process.env.CEDAR_PG = prevCedar;
+    if (prevUrl === undefined) delete process.env.TEST_DATABASE_URL;
+    else process.env.TEST_DATABASE_URL = prevUrl;
+    if (prevDb === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = prevDb;
   }
 });

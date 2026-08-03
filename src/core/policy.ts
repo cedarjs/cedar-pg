@@ -20,6 +20,20 @@ export type ResolveEnsureSkipInput = {
 };
 
 /**
+ * Inject DATABASE_URL (and TEST_DATABASE_URL for test mode) from a resolved URL.
+ * Single env path for ensure, clone, and external-url skip.
+ */
+export function applyDatabaseUrlEnv(
+  databaseUrl: string,
+  options: { mode?: "dev" | "test" } = {},
+): void {
+  process.env.DATABASE_URL = databaseUrl;
+  if ((options.mode ?? "test") === "test") {
+    process.env.TEST_DATABASE_URL = databaseUrl;
+  }
+}
+
+/**
  * True when the URL looks like a cedarpg provisioned database (`cpg_*` name/role).
  * These must never be treated as an external escape hatch; always re-ensure so
  * disposed/stale shell env cannot skip provisioning.

@@ -1,7 +1,7 @@
+import { dispose } from "../core/lifecycle.ts";
 import {
   requireMigrateFromEnv,
   setupTemplateMode,
-  teardownTemplateMode,
   type SetupTemplateModeOptions,
 } from "./template-mode.ts";
 
@@ -9,12 +9,18 @@ import {
  * Vitest globalSetup (template mode). Returns teardown that disposes TEMPLATE + clones.
  *
  * ```ts
+ * // vitest.config.ts
  * export default defineConfig({
  *   test: {
  *     globalSetup: ["@cedarjs/pg/vitest/template"],
- *     setupFiles: ["@cedarjs/pg/vitest/template/worker"],
+ *     // Local ESM file — pack emits CJS+ESM; do not point setupFiles at the packaged worker.
+ *     setupFiles: ["./vitest.cedar-worker.ts"],
  *   },
  * })
+ *
+ * // vitest.cedar-worker.ts
+ * import { ensureWorkerDatabase } from "@cedarjs/pg/vitest/template/worker";
+ * await ensureWorkerDatabase();
  * ```
  *
  * Requires `CEDAR_PG_MIGRATE` or `createGlobalSetup({ migrate })`.
@@ -35,7 +41,7 @@ async function runSetup(options: SetupTemplateModeOptions): Promise<() => Promis
   }
   const root = result.root;
   return async () => {
-    await teardownTemplateMode({ root });
+    await dispose({ root, mode: "test" });
   };
 }
 

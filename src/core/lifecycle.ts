@@ -10,7 +10,7 @@ import {
   writeLease,
   type Lease,
 } from "./lease.ts";
-import { resolveEnsureSkip, type ResolveEnsureSkipInput } from "./policy.ts";
+import { applyDatabaseUrlEnv, resolveEnsureSkip, type ResolveEnsureSkipInput } from "./policy.ts";
 import { resolveWorktreeIdentity } from "./worktree.ts";
 import {
   buildDatabaseUrl,
@@ -39,14 +39,18 @@ export function urlFromLease(lease: Lease): string {
 
 /**
  * DROP every DB owned by the lease role (TEMPLATE + clones), then forget lease.
- * Unsets `IS_TEMPLATE` inside each drop. Never forget without successful DROP(s).
+ * Unsets `IS_TEMPLATE` inside each drop. Never invents a DROP target; never forgets
+ * without successful DROP(s). Clones first, then the leased datname when owned.
  */
 async function dropThenForget(lease: Lease, adminUrl: string): Promise<string[]> {
   const owned = await listDatabasesOwnedByRole({
     adminUrl,
     roleName: lease.roleName,
   });
-  const ordered = [...owned.filter((name) => name !== lease.databaseName), lease.databaseName];
+  const ordered = [
+    ...owned.filter((name) => name !== lease.databaseName),
+    ...owned.filter((name) => name === lease.databaseName),
+  ];
   const dropped: string[] = [];
   for (const databaseName of ordered) {
     await dropDatabase({
@@ -124,10 +128,7 @@ export async function ensure(options: EnsureOptions): Promise<EnsureResult> {
   writeEnvFile(identity.root, mode, databaseUrl);
 
   if (options.setEnv !== false) {
-    process.env.DATABASE_URL = databaseUrl;
-    if (mode === "test") {
-      process.env.TEST_DATABASE_URL = databaseUrl;
-    }
+    applyDatabaseUrlEnv(databaseUrl, { mode });
   }
 
   const disposeFn = async () => {
@@ -156,27 +157,45 @@ export type EnsureIfNeededResult =
   | { status: "skipped"; reason: "external-url"; databaseUrl: string }
   | ({ status: "ensured" } & EnsureResult);
 
+type EnsureSkipOutcome =
+  | { status: "skipped"; reason: "disabled" }
+  | { status: "skipped"; reason: "external-url"; databaseUrl: string }
+  | { status: "run" };
+
+/** Shared skip → env injection for {@link ensureIfNeeded} / {@link cloneFromTemplateIfNeeded}. */
+function resolveEnsureSkipOutcome(
+  input: ResolveEnsureSkipInput & { mode: DbMode; setEnv?: boolean },
+): EnsureSkipOutcome {
+  const skip = resolveEnsureSkip({
+    url: input.url,
+    force: input.force,
+    disabled: input.disabled,
+  });
+  if (!skip.skip) return { status: "run" };
+  if (skip.reason === "external-url") {
+    if (input.setEnv !== false) {
+      applyDatabaseUrlEnv(skip.databaseUrl, { mode: input.mode });
+    }
+    return { status: "skipped", reason: "external-url", databaseUrl: skip.databaseUrl };
+  }
+  return { status: "skipped", reason: "disabled" };
+}
+
 /**
  * Resolve skip policy then ensure. Single entry for hosts (Cedar CLI, Jest, Vitest).
- * On external-url skip, sets DATABASE_URL when `setEnv` is not false.
+ * On external-url skip, applies DATABASE_URL / TEST_DATABASE_URL when `setEnv` is not false.
  */
 export async function ensureIfNeeded(
   options: EnsureIfNeededOptions,
 ): Promise<EnsureIfNeededResult> {
-  const skip = resolveEnsureSkip({
+  const outcome = resolveEnsureSkipOutcome({
     url: options.url,
     force: options.force,
     disabled: options.disabled,
+    mode: options.mode,
+    setEnv: options.setEnv,
   });
-  if (skip.skip) {
-    if (skip.reason === "external-url") {
-      if (options.setEnv !== false) {
-        process.env.DATABASE_URL = skip.databaseUrl;
-      }
-      return { status: "skipped", reason: "external-url", databaseUrl: skip.databaseUrl };
-    }
-    return { status: "skipped", reason: "disabled" };
-  }
+  if (outcome.status === "skipped") return outcome;
 
   const result = await ensure({
     root: options.root,
@@ -189,28 +208,30 @@ export async function ensureIfNeeded(
 export type MarkTemplateOptions = {
   root?: string;
   mode?: DbMode;
-  /** Override; defaults to leased database for mode. */
-  databaseName?: string;
+  /** Optional; defaults to `ensureHostRunning().adminUrl`. */
   adminUrl?: string;
 };
 
 /**
- * After migrations, mark the ensured DB as a PostgreSQL TEMPLATE so workers can clone it.
- * Pass fields from `EnsureResult` (`databaseName` + `adminUrl`) or resolve from the lease.
+ * After migrations, mark the leased DB as a PostgreSQL TEMPLATE so workers can clone it.
+ * Requires a lease from `ensure` (no datname override).
  */
 export async function markTemplate(
   options: MarkTemplateOptions = {},
-): Promise<{ databaseName: string }> {
+): Promise<{ databaseName: string; adminUrl: string }> {
   const identity = resolveWorktreeIdentity(options.root);
   const mode = options.mode ?? "test";
   const lease = readLease(identity.root, mode);
-  const databaseName = options.databaseName ?? lease?.databaseName;
-  if (!databaseName) {
+  if (!lease) {
     throw new Error(`no ${mode} lease; run ensure before markTemplate`);
   }
   const adminUrl = options.adminUrl ?? (await ensureHostRunning()).adminUrl;
-  await setDatabaseIsTemplate({ adminUrl, databaseName, isTemplate: true });
-  return { databaseName };
+  await setDatabaseIsTemplate({
+    adminUrl,
+    databaseName: lease.databaseName,
+    isTemplate: true,
+  });
+  return { databaseName: lease.databaseName, adminUrl };
 }
 
 export type CloneFromTemplateOptions = {
@@ -239,6 +260,7 @@ export type CloneResult = {
 /**
  * Clone the leased TEMPLATE database via admin (`CREATE DATABASE … TEMPLATE`).
  * Reuses the template role so `databaseUrl` passwords stay valid (scheme v2).
+ * Provider rejects when the leased DB is not marked TEMPLATE.
  */
 export async function cloneFromTemplate(
   options: CloneFromTemplateOptions = {},
@@ -268,10 +290,7 @@ export async function cloneFromTemplate(
   });
 
   if (options.setEnv) {
-    process.env.DATABASE_URL = databaseUrl;
-    if (mode === "test") {
-      process.env.TEST_DATABASE_URL = databaseUrl;
-    }
+    applyDatabaseUrlEnv(databaseUrl, { mode });
   }
 
   const roleName = lease.roleName;
@@ -290,6 +309,39 @@ export async function cloneFromTemplate(
   };
 }
 
+export type CloneFromTemplateIfNeededOptions = CloneFromTemplateOptions & ResolveEnsureSkipInput;
+
+export type CloneFromTemplateIfNeededResult =
+  | { status: "skipped"; reason: "disabled" }
+  | { status: "skipped"; reason: "external-url"; databaseUrl: string }
+  | ({ status: "cloned" } & CloneResult);
+
+/**
+ * Skip-aware clone for test runners. Shares ensure skip + env injection with {@link ensureIfNeeded}.
+ * Not exported from the package root — adapters own the runner wiring.
+ */
+export async function cloneFromTemplateIfNeeded(
+  options: CloneFromTemplateIfNeededOptions = {},
+): Promise<CloneFromTemplateIfNeededResult> {
+  const mode = options.mode ?? "test";
+  const outcome = resolveEnsureSkipOutcome({
+    url: options.url,
+    force: options.force,
+    disabled: options.disabled,
+    mode,
+    setEnv: options.setEnv,
+  });
+  if (outcome.status === "skipped") return outcome;
+
+  const result = await cloneFromTemplate({
+    root: options.root,
+    mode,
+    name: options.name,
+    setEnv: options.setEnv !== false,
+  });
+  return { status: "cloned", ...result };
+}
+
 export type DisposeOptions = {
   root?: string;
   mode?: DbMode;
@@ -300,9 +352,10 @@ export type DisposeResult =
   | { dropped: false; reason: "no-lease" | "host-unavailable" };
 
 /**
- * DROP every database owned by the lease role (TEMPLATE + clones), then forget the lease.
- * Unsets `IS_TEMPLATE` as needed. No-ops without a valid lease (never invents a DROP target).
- * If the host is unavailable, leaves the lease so dispose/gc can retry.
+ * Role-scoped teardown: DROP every database owned by the lease role (TEMPLATE + clones),
+ * then forget the lease. Unsets `IS_TEMPLATE` as needed. No-ops without a valid lease;
+ * never invents a DROP target beyond role ownership. If the host is unavailable, leaves
+ * the lease so dispose/gc can retry.
  */
 export async function dispose(options: DisposeOptions = {}): Promise<DisposeResult> {
   const identity = resolveWorktreeIdentity(options.root);

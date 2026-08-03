@@ -19,19 +19,6 @@ export type {
   DisposeResult,
 } from "./core/lifecycle.ts";
 
-export {
-  setupTemplateMode,
-  setupTemplateWorker,
-  ensureWorkerDatabase,
-  teardownTemplateMode,
-} from "./adapters/template-mode.ts";
-export type {
-  SetupTemplateModeOptions,
-  SetupTemplateWorkerOptions,
-  TemplateMigrateContext,
-  TemplateMigrateFn,
-} from "./adapters/template-mode.ts";
-
 export { resolveWorktreeIdentity, resolveRoot } from "./core/worktree.ts";
 export type { WorktreeIdentity } from "./core/worktree.ts";
 
@@ -50,6 +37,7 @@ export type { Lease } from "./core/lease.ts";
 
 export {
   resolveEnsureSkip,
+  applyDatabaseUrlEnv,
   isCedarPgManagedUrl,
   isExternalDatabaseEscapeHatch,
 } from "./core/policy.ts";

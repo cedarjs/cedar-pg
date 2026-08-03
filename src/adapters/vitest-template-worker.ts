@@ -1,7 +1,7 @@
 import { ensureWorkerDatabase } from "./template-mode.ts";
 
 /**
- * Vitest per-worker helper. Prefer a local ESM setupFiles entry:
+ * Import from a local ESM setupFiles file (not this module path as setupFiles):
  *
  * ```ts
  * // vitest.cedar-worker.ts
@@ -9,7 +9,7 @@ import { ensureWorkerDatabase } from "./template-mode.ts";
  * await ensureWorkerDatabase();
  * ```
  *
- * (No top-level await here — pack emits CJS + ESM.)
+ * Pack emits CJS + ESM, so this file itself cannot use top-level await.
  */
 export { ensureWorkerDatabase };
 export default ensureWorkerDatabase;

@@ -203,6 +203,17 @@ export async function cloneDatabaseFromTemplate(opts: {
   roleName: string;
 }): Promise<void> {
   await withAdminClient(opts.adminUrl, async (client) => {
+    const tmpl = await client.query<{ datistemplate: boolean }>(
+      `SELECT datistemplate FROM pg_database WHERE datname = $1`,
+      [opts.templateName],
+    );
+    if (!tmpl.rowCount) {
+      throw new Error(`template database not found: ${opts.templateName}`);
+    }
+    if (!tmpl.rows[0]?.datistemplate) {
+      throw new Error(`database is not a TEMPLATE; run markTemplate first: ${opts.templateName}`);
+    }
+
     const exists = await client.query("SELECT 1 FROM pg_database WHERE datname = $1", [
       opts.databaseName,
     ]);

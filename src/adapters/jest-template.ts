@@ -9,7 +9,7 @@ import {
  *
  * ```js
  * globalSetup: require.resolve("@cedarjs/pg/jest/template"),
- * globalTeardown: require.resolve("@cedarjs/pg/jest/template/teardown"),
+ * globalTeardown: require.resolve("@cedarjs/pg/jest-teardown"),
  * setupFilesAfterEnv: ["<rootDir>/jest.cedar-worker.cjs"],
  * ```
  *

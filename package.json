@@ -88,17 +88,11 @@
       "import": "./dist/jest-template.mjs",
       "require": "./dist/jest-template.cjs"
     },
-    "./jest/template/teardown": {
-      "types": "./dist/jest-template-teardown.d.mts",
-      "import": "./dist/jest-template-teardown.mjs",
-      "require": "./dist/jest-template-teardown.cjs"
-    },
     "./jest/template/worker": {
       "types": "./dist/jest-template-worker.d.mts",
       "import": "./dist/jest-template-worker.mjs",
       "require": "./dist/jest-template-worker.cjs"
     },
-
     "./package.json": "./package.json"
   },
   "publishConfig": {

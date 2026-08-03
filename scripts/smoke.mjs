@@ -35,8 +35,9 @@ run(
     `
 import {
   buildDatabaseName,
+  cloneFromTemplate,
   loadTestEnv,
-  setupTemplateMode,
+  markTemplate,
   STATE_DIRNAME,
 } from '${PACKAGE_NAME}';
 import { cedarPgTasks } from '${PACKAGE_NAME}/vite-plus';
@@ -59,7 +60,8 @@ if (typeof jestSetup !== 'function') throw new Error('jest setup export missing'
 if (typeof jestTeardown !== 'function') throw new Error('jest-teardown export missing');
 if (typeof loadTestEnv !== 'function') throw new Error('loadTestEnv export missing');
 if (STATE_DIRNAME !== '.cedarpg') throw new Error('bad STATE_DIRNAME ' + STATE_DIRNAME);
-if (typeof setupTemplateMode !== 'function') throw new Error('missing setupTemplateMode');
+if (typeof markTemplate !== 'function') throw new Error('missing markTemplate');
+if (typeof cloneFromTemplate !== 'function') throw new Error('missing cloneFromTemplate');
 if (typeof jestTemplate !== 'function') throw new Error('missing jest/template');
 if (typeof ensureWorkerDatabase !== 'function') throw new Error('missing jest/template/worker');
 if (typeof vitestTemplate !== 'function') throw new Error('missing vitest/template');

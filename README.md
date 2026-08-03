@@ -258,7 +258,7 @@ export async function migrate({ databaseUrl }: { databaseUrl: string }) {
 // jest.config.cjs
 module.exports = {
   globalSetup: require.resolve("@cedarjs/pg/jest/template"),
-  globalTeardown: require.resolve("@cedarjs/pg/jest/template/teardown"),
+  globalTeardown: require.resolve("@cedarjs/pg/jest-teardown"),
   setupFilesAfterEnv: ["<rootDir>/jest.cedar-worker.cjs"],
 };
 
@@ -301,25 +301,27 @@ await ensureWorkerDatabase();
 
 Same `CEDAR_PG_MIGRATE` / `createGlobalSetup({ migrate })` from `@cedarjs/pg/vitest/template`.
 
-**Programmatic:**
+**Programmatic** (core API — no runner adapters):
 
 ```ts
-import { setupTemplateMode, setupTemplateWorker, teardownTemplateMode } from "@cedarjs/pg";
+import { ensure, markTemplate, cloneFromTemplate, dispose } from "@cedarjs/pg";
 
-await setupTemplateMode({
-  migrate: async ({ databaseUrl, adminUrl }) => {
-    /* migrate once; adminUrl for privileged DDL if needed */
-  },
+const ensured = await ensure({ mode: "test" });
+await migrate({ databaseUrl: ensured.databaseUrl, adminUrl: ensured.adminUrl });
+await markTemplate({ root: ensured.root, mode: "test", adminUrl: ensured.adminUrl });
+const worker = await cloneFromTemplate({
+  root: ensured.root,
+  mode: "test",
+  name: "1",
+  setEnv: true,
 });
-await setupTemplateWorker({ name: process.env.JEST_WORKER_ID ?? "1" });
-await teardownTemplateMode();
+// … tests …
+await dispose({ root: ensured.root, mode: "test" }); // drops every DB owned by the lease role
 ```
-
-Or wire `ensure` → your migrate → `markTemplate` → `cloneFromTemplate` → `dispose` yourself.
 
 `ensure` returns `adminUrl` so apps do not re-derive `postgresql://postgres:postgres@127.0.0.1:<port>/postgres`.
 `cloneFromTemplate` uses the admin connection internally (`CREATE DATABASE … TEMPLATE`); test roles stay `LOGIN`-only.
-`dispose` / `teardownTemplateMode` unsets `IS_TEMPLATE` and drops every DB owned by the test role (template + clones).
+`dispose` unsets `IS_TEMPLATE` and drops every database owned by the lease role (template + clones).
 
 ## Env
 
@@ -335,7 +337,6 @@ Or wire `ensure` → your migrate → `markTemplate` → `cloneFromTemplate` →
 | `CEDAR_PG_SKIP_POSTINSTALL=1`  | Skip autopg install hook                                                                                      |
 | `CEDAR_PG_INSTALL_AUTOPG=1`    | Under `CI=true`, run binary-only `ci-install-autopg.sh` from postinstall                                      |
 | `CEDAR_PG_MIGRATE`             | Module path for template-mode migrate hook (`migrate` or default)                                             |
-| `CEDAR_PG_ADMIN_URL`           | Set by template globalSetup (superuser URL for privileged DDL)                                                |
 
 ## Alpha caveats
 
@@ -345,4 +346,4 @@ Or wire `ensure` → your migrate → `markTemplate` → `cloneFromTemplate` →
   (ephemeral cold-start when the runner has no live host; attach-wins otherwise).
 - State lives in product-owned `.cedarpg` (worktree + `~/.cedarpg/registry`), not under autopg's `~/.autopg/` or a generic `.pg`.
 - Role passwords are derived from `roleName` (`cedar-pg\\0` + roleName, scheme v2) so TEMPLATE clones that reuse a role keep working; bump the scheme id to change the derivation.
-- Test TEMPLATE flow: `ensure` returns `adminUrl`; `markTemplate` / `cloneFromTemplate` / `dispose` own clone + teardown. Optional `@cedarjs/pg/jest/template` + `@cedarjs/pg/vitest/template` adapters orchestrate ensure → app migrate → mark → per-worker clone; migrate itself stays app-owned.
+- Test TEMPLATE flow: `ensure` → app migrate → `markTemplate` → `cloneFromTemplate` → role-scoped `dispose`. Optional `@cedarjs/pg/jest/template` + `@cedarjs/pg/vitest/template` adapters orchestrate that pipeline; migrate stays app-owned.
