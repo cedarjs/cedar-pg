@@ -26,10 +26,12 @@ jobs:
 
       - run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      # Cache miss / fresh runner: postinstall skips under CI unless forced.
-      - run: node scripts/postinstall.js
+      # Binary only (no pm2). install.sh attestation needs a token on Actions.
+      - name: Install autopg binary
         env:
-          CEDAR_PG_INSTALL_AUTOPG: "1"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AUTOPG_VERSION: v3.0.7
+        run: bash scripts/ci-install-autopg.sh
 
       - run: vp check
       - run: vp test
