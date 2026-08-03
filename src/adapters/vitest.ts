@@ -16,7 +16,7 @@ import { ensureIfNeeded } from "../core/lifecycle.ts";
  * })
  * ```
  */
-export async function setup(): Promise<() => Promise<void>> {
+export default async function setup(): Promise<() => Promise<void>> {
   const result = await ensureIfNeeded({
     mode: "test",
     setEnv: true,
@@ -28,5 +28,3 @@ export async function setup(): Promise<() => Promise<void>> {
     await result.dispose();
   };
 }
-
-export default setup;
