@@ -1,12 +1,11 @@
 import { expect, test } from "vite-plus/test";
 import {
   buildDatabaseUrl,
-  ephemeralHostRecipe,
   parseHostStatus,
-  resolveEphemeralHostPolicy,
   rolePasswordFor,
   ROLE_PASSWORD_SCHEME,
 } from "../src/providers/autopg.ts";
+import { ephemeralHostRecipe, resolveEphemeralHostPolicy } from "../src/providers/host.ts";
 
 test("parseHostStatus requires numeric port", () => {
   expect(parseHostStatus('{"port":5433,"running":true}')).toEqual({ port: 5433 });
@@ -29,7 +28,6 @@ test("ephemeralHostRecipe uses RAM on Linux when /dev/shm is available", () => {
     shmAvailable: true,
     uid: 1000,
   });
-  expect(recipe.ram).toBe(true);
   expect(recipe.dataDir).toBe("/dev/shm/cedar-pg-1000");
   expect(recipe.installArgs).toEqual([
     "install",
@@ -53,7 +51,6 @@ test("ephemeralHostRecipe falls back to disk tmpdir without --ram", () => {
     tmpDir: "/tmp/cedar-test",
     uid: 1,
   });
-  expect(recipe.ram).toBe(false);
   expect(recipe.dataDir).toBe("/tmp/cedar-test/cedar-pg-host");
   expect(recipe.installArgs).toEqual([
     "install",
