@@ -1,10 +1,15 @@
 import { ensureWorkerDatabase } from "./template-mode.ts";
 
 /**
- * Vitest setupFiles entry — clones once per worker process and sets DATABASE_URL.
- * Uses top-level await (ESM).
+ * Vitest per-worker helper. Prefer a local ESM setupFiles entry:
+ *
+ * ```ts
+ * // vitest.cedar-worker.ts
+ * import { ensureWorkerDatabase } from "@cedarjs/pg/vitest/template/worker";
+ * await ensureWorkerDatabase();
+ * ```
+ *
+ * (No top-level await here — pack emits CJS + ESM.)
  */
-await ensureWorkerDatabase();
-
 export { ensureWorkerDatabase };
 export default ensureWorkerDatabase;

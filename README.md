@@ -286,12 +286,17 @@ export default createGlobalSetup({
 **Vitest (template mode):**
 
 ```ts
+// vitest.config.ts
 export default defineConfig({
   test: {
     globalSetup: ["@cedarjs/pg/vitest/template"],
-    setupFiles: ["@cedarjs/pg/vitest/template/worker"],
+    setupFiles: ["./vitest.cedar-worker.ts"],
   },
 });
+
+// vitest.cedar-worker.ts — once per worker process (ESM top-level await)
+import { ensureWorkerDatabase } from "@cedarjs/pg/vitest/template/worker";
+await ensureWorkerDatabase();
 ```
 
 Same `CEDAR_PG_MIGRATE` / `createGlobalSetup({ migrate })` from `@cedarjs/pg/vitest/template`.
