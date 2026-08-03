@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,34 @@ export type AutopgDiscovery = {
   adminUrl: string;
   bin: string;
 };
+
+/**
+ * Options for starting an autopg host when none is already live.
+ *
+ * Local default: omit options → attach if `autopg status` is live, else
+ * `autopg install` (pm2 Tier A).
+ *
+ * CI / ephemeral: pass `noPm2` + `noUi` (+ optional `ram` / `dataDir` / `port`)
+ * so cedar-pg owns a detached `autopg postmaster` instead of ambient pm2.
+ */
+export type EnsureHostOptions = {
+  /** Linux: `autopg postmaster --ram` (/dev/shm). Implies owned (non-pm2) lifecycle. */
+  ram?: boolean;
+  /** Data directory for install / postmaster (e.g. `/dev/shm/autopg-ci`). */
+  dataDir?: string;
+  /** Skip pm2 registration (Tier B / CI). Starts a detached postmaster. */
+  noPm2?: boolean;
+  /** Skip the autopg UI process (`--no-ui`). */
+  noUi?: boolean;
+  /** TCP port for Postgres. */
+  port?: number;
+  /** Override autopg binary path (same as passing a string to `ensureHostRunning`). */
+  bin?: string;
+};
+
+/** How long to wait for a freshly spawned postmaster to become discoverable. */
+const OWNED_POSTMASTER_READY_MS = 30_000;
+const OWNED_POSTMASTER_POLL_MS = 200;
 
 export const INSTALL_HINT =
   "autopg is required. Install with:\n" +
@@ -89,17 +117,91 @@ export function discoverHost(bin = requireAutopgBin()): AutopgDiscovery {
   return { port, adminUrl: adminUrlFor(port), bin };
 }
 
+function normalizeEnsureHostOptions(
+  optionsOrBin: EnsureHostOptions | string = {},
+): EnsureHostOptions {
+  if (typeof optionsOrBin === "string") return { bin: optionsOrBin };
+  return optionsOrBin;
+}
+
+/** True when cedar-pg must own a detached postmaster (not pm2). */
+export function usesOwnedPostmaster(opts: EnsureHostOptions): boolean {
+  return Boolean(opts.noPm2 || opts.ram);
+}
+
+/** `autopg install` argv for the given options (excluding the binary). */
+export function installArgsFor(opts: EnsureHostOptions): string[] {
+  const args = ["install"];
+  if (usesOwnedPostmaster(opts)) args.push("--no-pm2");
+  if (opts.noUi) args.push("--no-ui");
+  if (opts.port != null) args.push("--port", String(opts.port));
+  if (opts.dataDir) args.push("--data", opts.dataDir);
+  return args;
+}
+
 /**
- * Ensure the host postmaster is up. Runs `autopg install` only after status fails, then re-discovers.
+ * `autopg postmaster` argv for owned (non-pm2) starts.
+ * Matches the supported CI recipe: `--ram` + `--socket-dir` when `dataDir` is set.
  */
-export function ensureHostRunning(bin = requireAutopgBin()): AutopgDiscovery {
+export function postmasterArgsFor(opts: EnsureHostOptions): string[] {
+  const args = ["postmaster"];
+  if (opts.ram) args.push("--ram");
+  if (opts.port != null) args.push("--port", String(opts.port));
+  if (opts.dataDir) {
+    args.push("--socket-dir", opts.dataDir);
+    if (!opts.ram) args.push("--data", opts.dataDir);
+  }
+  return args;
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function startOwnedPostmaster(bin: string, opts: EnsureHostOptions): void {
+  const child = spawn(bin, postmasterArgsFor(opts), {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+}
+
+function waitForHost(bin: string, timeoutMs = OWNED_POSTMASTER_READY_MS): AutopgDiscovery {
+  const deadline = Date.now() + timeoutMs;
+  let lastDetail = "host not ready";
+  while (Date.now() < deadline) {
+    try {
+      return discoverHost(bin);
+    } catch (err) {
+      lastDetail = err instanceof Error ? err.message : String(err);
+      sleepSync(OWNED_POSTMASTER_POLL_MS);
+    }
+  }
+  throw new Error(
+    `Timed out waiting for autopg host after ${timeoutMs}ms.\n${lastDetail}\n${INSTALL_HINT}`,
+  );
+}
+
+/**
+ * Ensure the host postmaster is up.
+ *
+ * - Attaches when `autopg status --json` shows a live host (options are ignored).
+ * - Otherwise starts with the given options: bare `autopg install` (pm2) by default,
+ *   or `install --no-pm2 …` + detached `postmaster` when `noPm2` / `ram` is set.
+ *
+ * Accepts either an options object or a binary path string (legacy).
+ */
+export function ensureHostRunning(optionsOrBin: EnsureHostOptions | string = {}): AutopgDiscovery {
+  const opts = normalizeEnsureHostOptions(optionsOrBin);
+  const bin = opts.bin ?? requireAutopgBin();
+
   try {
     return discoverHost(bin);
   } catch {
-    // status failed — attempt install, then require a successful rediscovery
+    // status failed — start host with the requested options
   }
 
-  const install = spawnSync(bin, ["install"], {
+  const install = spawnSync(bin, installArgsFor(opts), {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -109,6 +211,12 @@ export function ensureHostRunning(bin = requireAutopgBin()): AutopgDiscovery {
         `${install.stderr || install.stdout || ""}\n${INSTALL_HINT}`,
     );
   }
+
+  if (usesOwnedPostmaster(opts)) {
+    startOwnedPostmaster(bin, opts);
+    return waitForHost(bin);
+  }
+
   return discoverHost(bin);
 }
 
