@@ -1,10 +1,13 @@
 name: Publish
 
-# Publishes @cedarjs/pg to npm. Not run automatically on push;
+# Stages @cedarjs/pg on npm. Not run automatically on push;
 # trigger via GitHub Release or workflow_dispatch when ready.
 #
 # Auth: npm Trusted Publisher (OIDC). Configure the GitHub Actions
-# publisher for @cedarjs/pg on npmjs.com. Do not set NPM_TOKEN.
+# publisher for @cedarjs/pg on npmjs.com with allowed action
+# "npm stage publish" only. Do not set NPM_TOKEN.
+# After CI stages the package, a maintainer approves from a trusted
+# device (2FA): vp pm stage approve <stage-id>
 on:
   release:
     types: [published]
@@ -33,14 +36,7 @@ jobs:
       - run: vp test
       - run: vp run smoke
 
-      - uses: actions/setup-node@v5
-        with:
-          node-version-file: .node-version
-          registry-url: https://registry.npmjs.org
-          scope: "@cedarjs"
-          package-manager-cache: false
-
-      - name: Publish to npm
+      - name: Stage publish to npm
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             TAG="${{ github.event.inputs.tag }}"
@@ -52,4 +48,4 @@ jobs:
               TAG="latest"
             fi
           fi
-          npm publish --access public --tag "$TAG" --provenance
+          vp pm stage publish --access public --tag "$TAG" --provenance
