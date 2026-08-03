@@ -66,6 +66,29 @@ curl -fsSL https://raw.githubusercontent.com/automagik-dev/autopg/v3.0.7/install
 
 Typical flow: `autopg daemon` (or your usual host install) once per machine → `cedarpg ensure` per worktree → connect with the printed `DATABASE_URL`.
 
+## CI install
+
+You often need a **pinned autopg binary** in CI even when package lifecycle scripts are disabled
+(`YARN_ENABLE_SCRIPTS=false`, `pnpm`/`npm` `--ignore-scripts`, etc.).
+`postinstall` also skips when `CI=true` unless `CEDAR_PG_INSTALL_AUTOPG=1`, and that flag alone is
+insufficient if the package manager never runs lifecycle scripts. Install or cache the binary
+explicitly:
+
+```bash
+# PATH
+export PATH="$HOME/.local/bin:$PATH"
+
+# Install pinned autopg when missing (or rely on Actions cache of ~/.local/share/autopg)
+AUTOPG_VERSION=v3.0.7
+curl -fsSL "https://raw.githubusercontent.com/automagik-dev/autopg/${AUTOPG_VERSION}/install.sh" \
+  | AUTOPG_VERSION="$AUTOPG_VERSION" bash
+
+# Jest / dotenv: force ensure even when TEST_DATABASE_URL points at a real external DB
+export CEDAR_PG_FORCE=1
+# optional when postinstall scripts run:
+# export CEDAR_PG_INSTALL_AUTOPG=1
+```
+
 ## Develop this package (Vite+)
 
 ```bash
@@ -135,15 +158,15 @@ await drop();
 
 ## Env
 
-| Var                           | Meaning                                                            |
-| ----------------------------- | ------------------------------------------------------------------ |
-| `AUTOPG_BIN`                  | Path to autopg                                                     |
-| `CEDAR_PG=0`                  | Disable auto-ensure in adapters                                    |
-| `TEST_DATABASE_URL`           | Escape hatch: skip ensure for external DBs (not `cpg_*` / `file:`) |
-| `CEDAR_PG_FORCE=1`            | Ignore external-URL escape hatch                                   |
-| `CEDAR_PG_REGISTRY_DIR`       | Override global lease registry (for `gc`)                          |
-| `CEDAR_PG_SKIP_POSTINSTALL=1` | Skip autopg install hook                                           |
-| `CEDAR_PG_INSTALL_AUTOPG=1`   | Force autopg install in CI                                         |
+| Var                           | Meaning                                                                                                       |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `AUTOPG_BIN`                  | Path to autopg                                                                                                |
+| `CEDAR_PG=0`                  | Disable auto-ensure in adapters                                                                               |
+| `TEST_DATABASE_URL`           | Escape hatch: skip ensure for real external DBs (not `cpg_*` / `file:` / `{…}` / `<…>` template placeholders) |
+| `CEDAR_PG_FORCE=1`            | Ignore external-URL escape hatch (use for real external DBs / Jest when you still want ensure)                |
+| `CEDAR_PG_REGISTRY_DIR`       | Override global lease registry (for `gc`)                                                                     |
+| `CEDAR_PG_SKIP_POSTINSTALL=1` | Skip autopg install hook                                                                                      |
+| `CEDAR_PG_INSTALL_AUTOPG=1`   | Force autopg install in CI when postinstall runs (not enough if lifecycle scripts are disabled)               |
 
 ## Alpha caveats
 

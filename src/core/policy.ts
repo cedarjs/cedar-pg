@@ -39,13 +39,28 @@ export function isCedarPgManagedUrl(url: string | undefined): boolean {
 }
 
 /**
+ * True when `url` still looks like an unset dotenv/template value
+ * (e.g. `postgresql://{yourMachine}@localhost:5432/app_test` or
+ * `postgresql://<user>@localhost/db`), not a real external database.
+ */
+function isUnsetTemplateUrl(url: string): boolean {
+  // `{yourMachine}`, `{user}`, etc.
+  if (/\{[^}]+\}/.test(url)) return true;
+  // `<user>`, `<password>` style templates
+  if (/<[^>]+>/.test(url)) return true;
+  return false;
+}
+
+/**
  * True when `url` is a real external database and ensure should be skipped.
- * Sqlite `file:` URLs and cedarpg `cpg_*` URLs are not external.
+ * Sqlite `file:` URLs, cedarpg `cpg_*` URLs, and unset template placeholders
+ * are not external.
  */
 export function isExternalDatabaseEscapeHatch(url: string | undefined): boolean {
   if (!url) return false;
   if (url.startsWith("file:")) return false;
   if (isCedarPgManagedUrl(url)) return false;
+  if (isUnsetTemplateUrl(url)) return false;
   return true;
 }
 
