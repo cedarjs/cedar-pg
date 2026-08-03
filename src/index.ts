@@ -1,9 +1,20 @@
-export { ensure, ensureIfNeeded, dispose, gc, urlFromLease } from "./core/lifecycle.ts";
+export {
+  ensure,
+  ensureIfNeeded,
+  markTemplate,
+  cloneFromTemplate,
+  dispose,
+  gc,
+  urlFromLease,
+} from "./core/lifecycle.ts";
 export type {
   EnsureOptions,
   EnsureResult,
   EnsureIfNeededOptions,
   EnsureIfNeededResult,
+  MarkTemplateOptions,
+  CloneFromTemplateOptions,
+  CloneResult,
   DisposeOptions,
   DisposeResult,
 } from "./core/lifecycle.ts";
@@ -11,7 +22,7 @@ export type {
 export { resolveWorktreeIdentity, resolveRoot } from "./core/worktree.ts";
 export type { WorktreeIdentity } from "./core/worktree.ts";
 
-export { buildDatabaseName, buildRoleName } from "./core/naming.ts";
+export { buildDatabaseName, buildRoleName, buildCloneDatabaseName } from "./core/naming.ts";
 export type { DbMode } from "./core/naming.ts";
 
 /** Worktree state dir name (`.cedarpg`). Prefer this over hardcoding in framework hosts. */

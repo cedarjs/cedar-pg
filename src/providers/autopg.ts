@@ -169,7 +169,74 @@ export async function ensureDatabase(opts: {
 }
 
 /**
- * DROP DATABASE (force terminate backends) + DROP ROLE.
+ * Mark (or unmark) a database as a PostgreSQL template (`IS_TEMPLATE`).
+ * Template DBs cannot be dropped until unset.
+ */
+export async function setDatabaseIsTemplate(opts: {
+  adminUrl: string;
+  databaseName: string;
+  isTemplate: boolean;
+}): Promise<void> {
+  const client = new pg.Client({ connectionString: opts.adminUrl });
+  await client.connect();
+  try {
+    const flag = opts.isTemplate ? "true" : "false";
+    await client.query(`ALTER DATABASE ${quoteIdent(opts.databaseName)} WITH IS_TEMPLATE ${flag}`);
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * CREATE DATABASE … TEMPLATE … OWNER via admin connection.
+ * Test roles are LOGIN-only; workers cannot CREATE DATABASE themselves.
+ */
+export async function cloneDatabaseFromTemplate(opts: {
+  adminUrl: string;
+  templateName: string;
+  databaseName: string;
+  roleName: string;
+}): Promise<void> {
+  const client = new pg.Client({ connectionString: opts.adminUrl });
+  await client.connect();
+  try {
+    const exists = await client.query("SELECT 1 FROM pg_database WHERE datname = $1", [
+      opts.databaseName,
+    ]);
+    if (exists.rowCount && exists.rowCount > 0) {
+      throw new Error(`database already exists: ${opts.databaseName}`);
+    }
+    await client.query(
+      `CREATE DATABASE ${quoteIdent(opts.databaseName)} WITH TEMPLATE ${quoteIdent(opts.templateName)} OWNER ${quoteIdent(opts.roleName)}`,
+    );
+  } finally {
+    await client.end();
+  }
+}
+
+/** Datnames owned by role (for dispose/GC of TEMPLATE clones). */
+export async function listDatabasesOwnedByRole(opts: {
+  adminUrl: string;
+  roleName: string;
+}): Promise<string[]> {
+  const client = new pg.Client({ connectionString: opts.adminUrl });
+  await client.connect();
+  try {
+    const result = await client.query<{ datname: string }>(
+      `SELECT datname FROM pg_database
+       WHERE datdba = (SELECT oid FROM pg_roles WHERE rolname = $1)
+       ORDER BY datname`,
+      [opts.roleName],
+    );
+    return result.rows.map((r) => r.datname);
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * DROP DATABASE (unset IS_TEMPLATE, force terminate backends) + DROP ROLE
+ * when the role owns no remaining databases.
  */
 export async function dropDatabase(opts: {
   adminUrl: string;
@@ -179,15 +246,26 @@ export async function dropDatabase(opts: {
   const client = new pg.Client({ connectionString: opts.adminUrl });
   await client.connect();
   try {
-    await client.query(
-      `
-      SELECT pg_terminate_backend(pid)
-      FROM pg_stat_activity
-      WHERE datname = $1 AND pid <> pg_backend_pid()
-      `,
+    const db = await client.query<{ datistemplate: boolean }>(
+      `SELECT datistemplate FROM pg_database WHERE datname = $1`,
       [opts.databaseName],
     );
-    await client.query(`DROP DATABASE IF EXISTS ${quoteIdent(opts.databaseName)}`);
+    if (db.rowCount && db.rowCount > 0) {
+      if (db.rows[0]?.datistemplate) {
+        await client.query(
+          `ALTER DATABASE ${quoteIdent(opts.databaseName)} WITH IS_TEMPLATE false`,
+        );
+      }
+      await client.query(
+        `
+        SELECT pg_terminate_backend(pid)
+        FROM pg_stat_activity
+        WHERE datname = $1 AND pid <> pg_backend_pid()
+        `,
+        [opts.databaseName],
+      );
+      await client.query(`DROP DATABASE IF EXISTS ${quoteIdent(opts.databaseName)}`);
+    }
     const owns = await client.query(
       `SELECT 1 FROM pg_database WHERE datdba = (SELECT oid FROM pg_roles WHERE rolname = $1) LIMIT 1`,
       [opts.roleName],
