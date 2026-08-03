@@ -58,6 +58,16 @@
       "import": "./dist/vitest.mjs",
       "require": "./dist/vitest.cjs"
     },
+    "./vitest/template": {
+      "types": "./dist/vitest-template.d.mts",
+      "import": "./dist/vitest-template.mjs",
+      "require": "./dist/vitest-template.cjs"
+    },
+    "./vitest/template/worker": {
+      "types": "./dist/vitest-template-worker.d.mts",
+      "import": "./dist/vitest-template-worker.mjs",
+      "require": "./dist/vitest-template-worker.cjs"
+    },
     "./jest": {
       "types": "./dist/jest.d.mts",
       "import": "./dist/jest.mjs",
@@ -73,6 +83,22 @@
       "import": "./dist/test-env.mjs",
       "require": "./dist/test-env.cjs"
     },
+    "./jest/template": {
+      "types": "./dist/jest-template.d.mts",
+      "import": "./dist/jest-template.mjs",
+      "require": "./dist/jest-template.cjs"
+    },
+    "./jest/template/teardown": {
+      "types": "./dist/jest-template-teardown.d.mts",
+      "import": "./dist/jest-template-teardown.mjs",
+      "require": "./dist/jest-template-teardown.cjs"
+    },
+    "./jest/template/worker": {
+      "types": "./dist/jest-template-worker.d.mts",
+      "import": "./dist/jest-template-worker.mjs",
+      "require": "./dist/jest-template-worker.cjs"
+    },
+
     "./package.json": "./package.json"
   },
   "publishConfig": {

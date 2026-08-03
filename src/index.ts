@@ -19,6 +19,21 @@ export type {
   DisposeResult,
 } from "./core/lifecycle.ts";
 
+export {
+  setupTemplateMode,
+  setupTemplateWorker,
+  ensureWorkerDatabase,
+  teardownTemplateMode,
+  createTemplateGlobalSetup,
+  resolveMigrateFromEnv,
+} from "./adapters/template-mode.ts";
+export type {
+  SetupTemplateModeOptions,
+  SetupTemplateWorkerOptions,
+  TemplateMigrateContext,
+  TemplateMigrateFn,
+} from "./adapters/template-mode.ts";
+
 export { resolveWorktreeIdentity, resolveRoot } from "./core/worktree.ts";
 export type { WorktreeIdentity } from "./core/worktree.ts";
 
