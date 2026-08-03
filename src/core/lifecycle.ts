@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { buildDatabaseName, buildRoleName, type DbMode } from "./naming.ts";
 import {
+  envPath,
   forgetLease,
   isOrphanLease,
   leaseDir,
@@ -12,19 +12,14 @@ import {
 } from "./lease.ts";
 import { resolveEnsureSkip, type ResolveEnsureSkipInput } from "./policy.ts";
 import { resolveWorktreeIdentity } from "./worktree.ts";
-import {
-  buildDatabaseUrl,
-  dropDatabase,
-  ensureDatabase,
-  ensureHostRunning,
-} from "../providers/autopg.ts";
+import { buildDatabaseUrl, dropDatabase, ensureDatabase } from "../providers/autopg.ts";
+import { ensureHostRunning } from "../providers/host.ts";
 
 function writeEnvFile(root: string, mode: DbMode, databaseUrl: string): void {
-  const dir = leaseDir(root);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  mkdirSync(leaseDir(root), { recursive: true, mode: 0o700 });
   let body = `DATABASE_URL=${databaseUrl}\n`;
   if (mode === "test") body += `TEST_DATABASE_URL=${databaseUrl}\n`;
-  writeFileSync(join(dir, `${mode}.env`), body, { mode: 0o600 });
+  writeFileSync(envPath(root, mode), body, { mode: 0o600 });
 }
 
 export function urlFromLease(lease: Lease): string {
@@ -79,7 +74,7 @@ export async function ensure(options: EnsureOptions): Promise<EnsureResult> {
   const databaseName = buildDatabaseName(identity, mode);
   const roleName = buildRoleName(databaseName);
 
-  const host = ensureHostRunning();
+  const host = await ensureHostRunning();
   await ensureDatabase({
     adminUrl: host.adminUrl,
     databaseName,
@@ -192,7 +187,7 @@ export async function dispose(options: DisposeOptions = {}): Promise<DisposeResu
 
   let host;
   try {
-    host = ensureHostRunning();
+    host = await ensureHostRunning();
   } catch {
     // Keep lease + registry so a later dispose/gc can still find the DB.
     return { dropped: false, reason: "host-unavailable" };
@@ -215,7 +210,7 @@ export async function gc(): Promise<{
 
   let host;
   try {
-    host = ensureHostRunning();
+    host = await ensureHostRunning();
   } catch {
     return { dropped };
   }

@@ -12,6 +12,8 @@ export default defineConfig({
       nx: "src/adapters/nx.ts",
       vitest: "src/adapters/vitest.ts",
       jest: "src/adapters/jest.ts",
+      "jest-teardown": "src/adapters/jest-teardown.ts",
+      "test-env": "src/adapters/test-env.ts",
     },
     dts: true,
     format: ["esm", "cjs"],
@@ -24,6 +26,11 @@ export default defineConfig({
       // package.json has `build`; task names must not duplicate — smoke depends on it.
       smoke: {
         command: "node scripts/smoke.mjs",
+        dependsOn: ["build"],
+        cache: false,
+      },
+      "smoke:pg": {
+        command: "node scripts/smoke-pg.mjs",
         dependsOn: ["build"],
         cache: false,
       },

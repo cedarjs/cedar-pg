@@ -72,6 +72,21 @@ export function leasePath(root: string, mode: DbMode): string {
   return join(leaseDir(root), `${mode}.json`);
 }
 
+export function envPath(root: string, mode: DbMode): string {
+  return join(leaseDir(root), `${mode}.env`);
+}
+
+/** Best-effort delete worktree lease JSON + mode env (missing is fine). */
+function unlinkWorktreeArtifacts(root: string, mode: DbMode): void {
+  for (const file of [leasePath(root, mode), envPath(root, mode)]) {
+    try {
+      unlinkSync(file);
+    } catch {
+      // root or file may already be gone
+    }
+  }
+}
+
 /** Durable registry outside worktrees so GC can find orphans after a checkout is deleted. */
 export function registryDir(): string {
   return process.env.CEDAR_PG_REGISTRY_DIR || join(homedir(), STATE_DIRNAME, "registry");
@@ -132,20 +147,16 @@ export function writeLease(lease: Lease): void {
 }
 
 /**
- * Remove registry entry by databaseName and best-effort delete the worktree lease file.
+ * Remove registry entry by databaseName and best-effort delete worktree lease + env.
  * Call only after a successful DROP (or when intentionally abandoning tracking).
  */
 export function forgetLease(lease: Pick<Lease, "root" | "mode" | "databaseName">): void {
   unregisterLease(lease.databaseName);
-  try {
-    unlinkSync(leasePath(lease.root, lease.mode));
-  } catch {
-    // root or file may already be gone
-  }
+  unlinkWorktreeArtifacts(lease.root, lease.mode);
 }
 
 /**
- * Clear worktree lease + registry. Unregisters by databaseName even when the local
+ * Clear worktree lease + env + registry. Unregisters by databaseName even when the local
  * file fails full parse (peeks databaseName from raw JSON).
  */
 export function clearLease(root: string, mode: DbMode): void {
@@ -155,11 +166,7 @@ export function clearLease(root: string, mode: DbMode): void {
     return;
   }
   const databaseName = peekDatabaseName(root, mode);
-  try {
-    unlinkSync(leasePath(root, mode));
-  } catch {
-    // missing is fine
-  }
+  unlinkWorktreeArtifacts(root, mode);
   if (databaseName) {
     unregisterLease(databaseName);
   }
