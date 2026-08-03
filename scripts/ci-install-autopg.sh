@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
-# CI-only: fetch pinned autopg release, verify attestation, install binary only.
-# Does NOT run `autopg install` (pm2) — cedar-pg ephemeral host owns startup.
+# Binary-only autopg install for CI (and postinstall when CEDAR_PG_INSTALL_AUTOPG=1).
+# Fetches pinned release, verifies attestation, installs binary — no pm2.
+# Version pin: scripts/autopg-version (override with AUTOPG_VERSION).
 set -euo pipefail
 
-VERSION="${AUTOPG_VERSION:-v3.0.7}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -z "${AUTOPG_VERSION:-}" ]; then
+  AUTOPG_VERSION="$(tr -d '[:space:]' <"${SCRIPT_DIR}/autopg-version")"
+fi
+VERSION="${AUTOPG_VERSION}"
 REPO="${AUTOPG_REPO:-automagik-dev/autopg}"
 LEGACY_REPO="${AUTOPG_LEGACY_REPO:-namastexlabs/pgserve}"
 

@@ -136,17 +136,26 @@ async function startEphemeralHost(bin: string): Promise<AutopgDiscovery> {
     state.exit = { code, signal };
   });
 
+  const abandon = () => {
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      // already exited
+    }
+    child.unref();
+  };
+
   const deadline = Date.now() + OWNED_POSTMASTER_READY_MS;
   let lastDetail = "TCP not accepting";
   while (Date.now() < deadline) {
     if (state.spawnError) {
-      child.unref();
+      abandon();
       throw new Error(
         `Failed to spawn autopg postmaster.\n${state.spawnError.message}\n${INSTALL_HINT}`,
       );
     }
     if (state.exit) {
-      child.unref();
+      abandon();
       throw new Error(
         `autopg postmaster exited before ready (code=${state.exit.code}, signal=${state.exit.signal}).\n` +
           INSTALL_HINT,
@@ -160,7 +169,7 @@ async function startEphemeralHost(bin: string): Promise<AutopgDiscovery> {
     await sleep(OWNED_POSTMASTER_POLL_MS);
   }
 
-  child.unref();
+  abandon();
   throw new Error(
     `Timed out waiting for autopg host after ${OWNED_POSTMASTER_READY_MS}ms.\n${lastDetail}\n${INSTALL_HINT}`,
   );
