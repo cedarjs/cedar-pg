@@ -110,17 +110,14 @@ export async function teardownTemplateMode(options: { root?: string } = {}): Pro
   await dispose({ root: options.root, mode: "test" });
 }
 
-/** Factory for Jest-style `globalSetup` modules (void). */
-export function createTemplateGlobalSetup(options: SetupTemplateModeOptions) {
-  return async () => {
-    await setupTemplateMode(options);
-  };
-}
-
-/** Resolve migrate hook from `CEDAR_PG_MIGRATE` (module path or package). */
-export async function resolveMigrateFromEnv(): Promise<TemplateMigrateFn | undefined> {
+/** Require migrate from `CEDAR_PG_MIGRATE` or throw (default runner hooks). */
+export async function requireMigrateFromEnv(): Promise<TemplateMigrateFn> {
   const spec = process.env.CEDAR_PG_MIGRATE?.trim();
-  if (!spec) return undefined;
+  if (!spec) {
+    throw new Error(
+      "template mode requires a migrate hook: set CEDAR_PG_MIGRATE or use createGlobalSetup({ migrate })",
+    );
+  }
 
   const mod = (await import(toImportUrl(spec))) as {
     default?: unknown;
@@ -131,17 +128,6 @@ export async function resolveMigrateFromEnv(): Promise<TemplateMigrateFn | undef
     throw new Error("CEDAR_PG_MIGRATE must export migrate() or a default function");
   }
   return fn as TemplateMigrateFn;
-}
-
-/** Require migrate from env or throw (default runner hooks). */
-export async function requireMigrateFromEnv(): Promise<TemplateMigrateFn> {
-  const migrate = await resolveMigrateFromEnv();
-  if (!migrate) {
-    throw new Error(
-      "template mode requires a migrate hook: set CEDAR_PG_MIGRATE or use createGlobalSetup({ migrate })",
-    );
-  }
-  return migrate;
 }
 
 function toImportUrl(spec: string): string {

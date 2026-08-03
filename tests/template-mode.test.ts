@@ -211,14 +211,14 @@ test("teardownTemplateMode disposes test lease", async () => {
   });
 });
 
-test("createTemplateGlobalSetup wires migrate hook", async () => {
+test("jest createGlobalSetup wires migrate hook", async () => {
   const ensureIfNeeded = vi.fn(async () => ensuredLease());
   const markTemplate = vi.fn(async () => ({ databaseName: "cpg_tmpl" }));
   const migrate = vi.fn(async () => {});
 
   await withMockedLifecycle({ ensureIfNeeded, markTemplate }, async () => {
-    const { createTemplateGlobalSetup } = await import("../src/adapters/template-mode.ts");
-    await createTemplateGlobalSetup({ migrate })();
+    const { createGlobalSetup } = await import("../src/adapters/jest-template.ts");
+    await createGlobalSetup({ migrate })();
     expect(migrate).toHaveBeenCalledTimes(1);
     expect(markTemplate).toHaveBeenCalledTimes(1);
   });

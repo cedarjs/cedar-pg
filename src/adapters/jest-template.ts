@@ -1,5 +1,4 @@
 import {
-  createTemplateGlobalSetup,
   requireMigrateFromEnv,
   setupTemplateMode,
   type SetupTemplateModeOptions,
@@ -23,5 +22,7 @@ export default async function globalSetup(): Promise<void> {
 
 /** Build a Jest globalSetup with an in-process migrate hook. */
 export function createGlobalSetup(options: SetupTemplateModeOptions) {
-  return createTemplateGlobalSetup(options);
+  return async () => {
+    await setupTemplateMode(options);
+  };
 }
