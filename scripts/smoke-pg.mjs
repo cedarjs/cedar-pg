@@ -129,15 +129,33 @@ if (host.live) {
   );
 }
 
+const localBin = join(process.env.HOME ?? "", ".local", "bin");
 const smokeEnv = {
   ...process.env,
   CI: "true",
   CEDAR_PG_EPHEMERAL_HOST: "1",
   CEDAR_PG_INSTALL_AUTOPG: process.env.CEDAR_PG_INSTALL_AUTOPG ?? "1",
+  // GHA puts this on PATH via GITHUB_PATH; keep it for child runners too.
+  PATH: `${localBin}${process.env.PATH ? `:${process.env.PATH}` : ""}`,
 };
 // Avoid inheriting a developer escape-hatch / disable flag into the fixture.
 for (const key of ["DATABASE_URL", "TEST_DATABASE_URL", "CEDAR_PG", "CEDAR_PG_FORCE"]) {
   delete smokeEnv[key];
+}
+
+if (process.env.CEDAR_PG_INSTALL_AUTOPG === "1" && !host.live) {
+  // Repo CI installs via scripts/postinstall.js; consumers may still miss PATH.
+  const which = spawnSync("autopg", ["--help"], {
+    encoding: "utf8",
+    stdio: "pipe",
+    env: smokeEnv,
+  });
+  if (which.status !== 0) {
+    console.log("==> autopg missing; running package postinstall");
+    const installEnv = { ...smokeEnv };
+    delete installEnv.CEDAR_PG_SKIP_POSTINSTALL;
+    run("node", [join(ROOT, "scripts/postinstall.js")], { env: installEnv });
+  }
 }
 
 console.log("==> vitest via @cedarjs/pg/vitest");
