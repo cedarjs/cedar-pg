@@ -1,11 +1,11 @@
 import { expect, test } from "vite-plus/test";
 import {
+  adminUrlFor,
   buildDatabaseUrl,
   parseHostStatus,
   rolePasswordFor,
   ROLE_PASSWORD_SCHEME,
 } from "../src/providers/autopg.ts";
-import { ephemeralHostRecipe, resolveEphemeralHostPolicy } from "../src/providers/host.ts";
 
 test("parseHostStatus requires numeric port", () => {
   expect(parseHostStatus('{"port":5433,"running":true}')).toEqual({ port: 5433 });
@@ -14,71 +14,17 @@ test("parseHostStatus requires numeric port", () => {
   expect(() => parseHostStatus("not-json")).toThrow(/invalid JSON/);
 });
 
-test("resolveEphemeralHostPolicy from CEDAR_PG_EPHEMERAL_HOST and CI", () => {
-  expect(resolveEphemeralHostPolicy({ CEDAR_PG_EPHEMERAL_HOST: "1" })).toBe("ephemeral");
-  expect(resolveEphemeralHostPolicy({ CEDAR_PG_EPHEMERAL_HOST: "0", CI: "true" })).toBe("local");
-  expect(resolveEphemeralHostPolicy({ CI: "true" })).toBe("ephemeral");
-  expect(resolveEphemeralHostPolicy({ CI: "1" })).toBe("local");
-  expect(resolveEphemeralHostPolicy({})).toBe("local");
-});
-
-test("ephemeralHostRecipe uses RAM on Linux when /dev/shm is available", () => {
-  const recipe = ephemeralHostRecipe({
-    platform: "linux",
-    shmAvailable: true,
-    uid: 1000,
-  });
-  expect(recipe.dataDir).toBe("/dev/shm/cedar-pg-1000");
-  expect(recipe.port).toBe(55432);
-  expect(recipe.installArgs).toEqual([
-    "install",
-    "--no-pm2",
-    "--no-ui",
-    "--port",
-    "55432",
-    "--data",
-    "/dev/shm/cedar-pg-1000",
-  ]);
-  expect(recipe.postmasterArgs).toEqual([
-    "postmaster",
-    "--ram",
-    "--port",
-    "55432",
-    "--socket-dir",
-    "/dev/shm/cedar-pg-1000",
-    "--data",
-    "/dev/shm/cedar-pg-1000",
-  ]);
-});
-
-test("ephemeralHostRecipe falls back to disk tmpdir without --ram", () => {
-  const recipe = ephemeralHostRecipe({
-    platform: "darwin",
-    shmAvailable: false,
-    tmpDir: "/tmp/cedar-test",
-    uid: 1,
-    port: 55433,
-  });
-  expect(recipe.dataDir).toBe("/tmp/cedar-test/cedar-pg-host");
-  expect(recipe.port).toBe(55433);
-  expect(recipe.installArgs).toEqual([
-    "install",
-    "--no-pm2",
-    "--no-ui",
-    "--port",
-    "55433",
-    "--data",
-    "/tmp/cedar-test/cedar-pg-host",
-  ]);
-  expect(recipe.postmasterArgs).toEqual([
-    "postmaster",
-    "--port",
-    "55433",
-    "--socket-dir",
-    "/tmp/cedar-test/cedar-pg-host",
-    "--data",
-    "/tmp/cedar-test/cedar-pg-host",
-  ]);
+test("adminUrlFor uses autopg default credentials and AUTOPG_PG_* overrides", () => {
+  expect(adminUrlFor(25432, {})).toBe("postgresql://postgres:postgres@127.0.0.1:25432/postgres");
+  expect(
+    adminUrlFor(55432, {
+      AUTOPG_PG_USER: "admin",
+      AUTOPG_PG_PASSWORD: "s3cret/x",
+    }),
+  ).toBe("postgresql://admin:s3cret%2Fx@127.0.0.1:55432/postgres");
+  expect(adminUrlFor(1, { PGSERVE_PG_PASSWORD: "legacy" })).toBe(
+    "postgresql://postgres:legacy@127.0.0.1:1/postgres",
+  );
 });
 
 test("rolePasswordFor is stable for password scheme v1", () => {

@@ -181,16 +181,17 @@ Set `CEDAR_PG_INSTALL_AUTOPG=1` so `postinstall` still fetches autopg when the c
 
 ## Env
 
-| Var                           | Meaning                                                            |
-| ----------------------------- | ------------------------------------------------------------------ |
-| `AUTOPG_BIN`                  | Path to autopg                                                     |
-| `CEDAR_PG=0`                  | Disable auto-ensure in adapters                                    |
-| `TEST_DATABASE_URL`           | Escape hatch: skip ensure for external DBs (not `cpg_*` / `file:`) |
-| `CEDAR_PG_FORCE=1`            | Ignore external-URL escape hatch                                   |
-| `CEDAR_PG_EPHEMERAL_HOST`     | `1` force / `0` disable ephemeral host (auto when `CI=true`)       |
-| `CEDAR_PG_REGISTRY_DIR`       | Override global lease registry (for `gc`)                          |
-| `CEDAR_PG_SKIP_POSTINSTALL=1` | Skip autopg install hook                                           |
-| `CEDAR_PG_INSTALL_AUTOPG=1`   | Force autopg install in CI                                         |
+| Var                            | Meaning                                                            |
+| ------------------------------ | ------------------------------------------------------------------ |
+| `AUTOPG_BIN`                   | Path to autopg                                                     |
+| `AUTOPG_PG_USER` / `_PASSWORD` | Autopg superuser for admin URL (default `postgres` / `postgres`)   |
+| `CEDAR_PG=0`                   | Disable auto-ensure in adapters                                    |
+| `TEST_DATABASE_URL`            | Escape hatch: skip ensure for external DBs (not `cpg_*` / `file:`) |
+| `CEDAR_PG_FORCE=1`             | Ignore external-URL escape hatch                                   |
+| `CEDAR_PG_EPHEMERAL_HOST`      | `1` force / `0` disable ephemeral host (auto when `CI=true`)       |
+| `CEDAR_PG_REGISTRY_DIR`        | Override global lease registry (for `gc`)                          |
+| `CEDAR_PG_SKIP_POSTINSTALL=1`  | Skip autopg install hook                                           |
+| `CEDAR_PG_INSTALL_AUTOPG=1`    | Force autopg install in CI                                         |
 
 ## Alpha caveats
 
