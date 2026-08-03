@@ -17,8 +17,8 @@ export const INSTALL_HINT =
   "  curl -fsSL https://raw.githubusercontent.com/automagik-dev/autopg/main/install.sh | bash\n" +
   "Then ensure ~/.local/bin is on PATH, or set AUTOPG_BIN.";
 
-/** Password scheme v1: sha256(PASSWORD_SALT_PREFIX + "\\0" + databaseName) hex[:32]. Frozen for URL rebuild. */
-export const ROLE_PASSWORD_SCHEME = "v1" as const;
+/** Password scheme v2: sha256(PASSWORD_SALT_PREFIX + "\\0" + roleName) hex[:32]. Frozen for URL rebuild. */
+export const ROLE_PASSWORD_SCHEME = "v2" as const;
 
 function candidateBins(): string[] {
   const out: string[] = [];
@@ -114,10 +114,13 @@ function quoteLiteral(value: string): string {
 /**
  * Deterministic local-only password for an app role (Prisma/TCP need it;
  * autopg hba uses `password` for 127.0.0.1).
+ *
+ * Keyed by `roleName` (not databaseName) so TEMPLATE clones that reuse the
+ * same role keep working when `buildDatabaseUrl` is called with a new database.
  */
-export function rolePasswordFor(databaseName: string): string {
+export function rolePasswordFor(roleName: string): string {
   return createHash("sha256")
-    .update(`${PASSWORD_SALT_PREFIX}\0${databaseName}`)
+    .update(`${PASSWORD_SALT_PREFIX}\0${roleName}`)
     .digest("hex")
     .slice(0, 32);
 }
@@ -131,7 +134,7 @@ export async function ensureDatabase(opts: {
   roleName: string;
   password?: string;
 }): Promise<void> {
-  const password = opts.password ?? rolePasswordFor(opts.databaseName);
+  const password = opts.password ?? rolePasswordFor(opts.roleName);
   const client = new pg.Client({ connectionString: opts.adminUrl });
   await client.connect();
   try {
@@ -203,7 +206,7 @@ export function buildDatabaseUrl(opts: {
   roleName: string;
   password?: string;
 }): string {
-  const password = opts.password ?? rolePasswordFor(opts.databaseName);
+  const password = opts.password ?? rolePasswordFor(opts.roleName);
   const user = encodeURIComponent(opts.roleName);
   const pass = encodeURIComponent(password);
   return `postgresql://${user}:${pass}@127.0.0.1:${opts.port}/${opts.databaseName}`;

@@ -19,6 +19,6 @@ test("state dir is product-owned .cedarpg (not .pg or under .autopg)", () => {
   expect(STATE_DIRNAME).not.toContain("autopg");
 });
 
-test("password salt is opaque and frozen for scheme v1", () => {
+test("password salt is opaque and frozen for scheme v2", () => {
   expect(PASSWORD_SALT_PREFIX).toBe("cedar-pg");
 });
