@@ -61,6 +61,16 @@
       "import": "./dist/jest.mjs",
       "require": "./dist/jest.cjs"
     },
+    "./jest-teardown": {
+      "types": "./dist/jest-teardown.d.mts",
+      "import": "./dist/jest-teardown.mjs",
+      "require": "./dist/jest-teardown.cjs"
+    },
+    "./test-env": {
+      "types": "./dist/test-env.d.mts",
+      "import": "./dist/test-env.mjs",
+      "require": "./dist/test-env.cjs"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {
