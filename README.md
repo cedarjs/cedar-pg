@@ -95,10 +95,67 @@ yarn add @cedarjs/pg@file:../cedar-pg
 ```bash
 cedarpg ensure --mode=dev
 cedarpg ensure --mode=test --print-env
+cedarpg run --mode=dev -- yarn tsx scripts/apiServer/dev.ts
+cedarpg run --mode=test -- vitest run
 cedarpg dispose --mode=test
 cedarpg print-url --mode=dev
 cedarpg gc   # drop DBs whose worktree root is gone (uses ~/.cedarpg/registry)
 ```
+
+`cedarpg run` ensures (or attaches the lease), force-sets `DATABASE_URL` (and
+`TEST_DATABASE_URL` in test mode) in the **child** process, then execs the command.
+Use it for Nx / e2e / API wrappers — local `.env` URLs do not win inside the child.
+
+## Nx consumer adapter
+
+Nx `dependsOn` alone does not forward env from an ensure task into dependents
+(Vite+ `env: [...]` does). **Canonical fix:** wrap the child with `cedarpg run`.
+Secondary: point Nx `envFile` at `.cedarpg/<mode>.env` after ensure.
+
+```ts
+import { cedarPgNxTargets, cedarPgRunCommand, relativeEnvFile } from "@cedarjs/pg/nx";
+
+cedarPgNxTargets();
+// { "db:ensure": { command: "cedarpg ensure --mode=dev", cache: false }, … }
+
+cedarPgRunCommand("dev", "yarn tsx scripts/apiServer/dev.ts");
+// "cedarpg run --mode=dev -- yarn tsx scripts/apiServer/dev.ts"
+
+relativeEnvFile("dev"); // ".cedarpg/dev.env"
+```
+
+```json
+{
+  "targets": {
+    "dev": {
+      "command": "cedarpg run --mode=dev -- yarn tsx scripts/apiServer/dev.ts"
+    },
+    "db:ensure": { "command": "cedarpg ensure --mode=dev" },
+    "serve": {
+      "dependsOn": ["db:ensure"],
+      "command": "node dist/server.js",
+      "options": { "envFile": ".cedarpg/dev.env" }
+    }
+  }
+}
+```
+
+For a db:ready-style migrate hook (same compose shape as Jest `createGlobalSetup`):
+
+```ts
+// tools/db-ready.ts
+import { createEnsureTask } from "@cedarjs/pg";
+
+await createEnsureTask({
+  mode: "dev",
+  afterEnsure: async ({ databaseUrl }) => {
+    // prisma migrate deploy / drizzle push / …
+  },
+})();
+```
+
+Fallbacks when you cannot wrap with `run`: `loadDevEnv({ overwrite: true })` or
+`import "@cedarjs/pg/dev-env"`. Absolute path helper: `envFilePath(root, mode)`.
 
 ## Vite+ consumer adapter
 
@@ -179,16 +236,24 @@ if (process.env.CEDAR_PG === "1" || process.env.CEDAR_PG === "true") {
 setupFiles: [require.resolve("@cedarjs/pg/test-env")],
 ```
 
-Use exported `STATE_DIRNAME` (`.cedarpg`) / `loadTestEnv(root?)` instead of hardcoding the lease dir.
+Use exported `STATE_DIRNAME` (`.cedarpg`) / `loadTestEnv` / `loadDevEnv` /
+`envFilePath(root, mode)` instead of hardcoding the lease dir.
+
+`loadTestEnv` / `loadDevEnv` only fill **undefined** keys by default. Pass
+`{ overwrite: true }` (or import `@cedarjs/pg/dev-env`) when a local `.env`
+`DATABASE_URL` / `TEST_DATABASE_URL` should lose to cedar-pg. That is not the
+same as `CEDAR_PG_FORCE` / ensure `{ force }` (external-URL escape hatch).
 
 ## Programmatic API
 
 ```ts
-import { ensure, dispose, loadTestEnv, STATE_DIRNAME } from "@cedarjs/pg";
+import { ensure, dispose, loadTestEnv, loadDevEnv, envFilePath, STATE_DIRNAME } from "@cedarjs/pg";
 
 const { databaseUrl, adminUrl, databaseName, dispose: drop } = await ensure({ mode: "test" });
 // … tests …
 await drop();
+
+loadDevEnv({ overwrite: true }); // override .env DATABASE_URL from .cedarpg/dev.env
 ```
 
 ### Host startup (CI ephemeral)
@@ -322,7 +387,7 @@ Worker adapters call `cloneFromTemplateIfNeeded` (shared skip policy via `runIfN
 | `AUTOPG_PG_USER` / `_PASSWORD` | Autopg superuser for admin URL (default `postgres` / `postgres`)                                              |
 | `CEDAR_PG=0`                   | Disable auto-ensure in adapters                                                                               |
 | `TEST_DATABASE_URL`            | Escape hatch: skip ensure for real external DBs (not `cpg_*` / `file:` / `{…}` / `<…>` template placeholders) |
-| `CEDAR_PG_FORCE=1`             | Ignore external-URL escape hatch (use for real external DBs / Jest when you still want ensure)                |
+| `CEDAR_PG_FORCE=1`             | Ignore external-URL escape hatch (adapters + `cedarpg ensure --force` / `run --force`)                        |
 | `CEDAR_PG_EPHEMERAL_HOST`      | `1` force / `0` disable ephemeral host (auto when `CI=true`)                                                  |
 | `CEDAR_PG_REGISTRY_DIR`        | Override global lease registry (for `gc`)                                                                     |
 | `CEDAR_PG_SKIP_POSTINSTALL=1`  | Skip autopg install hook                                                                                      |

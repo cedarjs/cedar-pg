@@ -37,15 +37,20 @@ import {
   buildDatabaseName,
   cloneFromTemplate,
   cloneFromTemplateIfNeeded,
+  createEnsureTask,
+  envFilePath,
+  loadDevEnv,
   loadTestEnv,
   markTemplate,
   STATE_DIRNAME,
 } from '${PACKAGE_NAME}';
 import { cedarPgTasks } from '${PACKAGE_NAME}/vite-plus';
+import { cedarPgNxTargets, cedarPgRunCommand, relativeEnvFile } from '${PACKAGE_NAME}/nx';
 import vitestSetup from '${PACKAGE_NAME}/vitest';
 import jestSetup from '${PACKAGE_NAME}/jest';
 import jestTeardown from '${PACKAGE_NAME}/jest-teardown';
 import '${PACKAGE_NAME}/test-env';
+import '${PACKAGE_NAME}/dev-env';
 import {
   createGlobalSetup as createJestTemplateSetup,
   ensureWorkerDatabase,
@@ -61,10 +66,22 @@ const name = buildDatabaseName(
 if (name !== 'cpg_cedar_feat_dev_abcd1234') throw new Error('bad name ' + name);
 const tasks = cedarPgTasks();
 if (!tasks['db:ensure']) throw new Error('missing db:ensure');
+const nxTargets = cedarPgNxTargets();
+if (!nxTargets['db:ensure']) throw new Error('missing nx db:ensure');
+if (JSON.stringify(tasks) !== JSON.stringify(nxTargets)) {
+  throw new Error('vite-plus and nx lifecycle targets drifted');
+}
+if (!cedarPgRunCommand('dev', 'echo ok').includes('run --mode=dev')) {
+  throw new Error('cedarPgRunCommand missing run');
+}
+if (relativeEnvFile('dev') !== '.cedarpg/dev.env') throw new Error('bad relativeEnvFile');
+if (typeof createEnsureTask !== 'function') throw new Error('missing createEnsureTask');
 if (typeof vitestSetup !== 'function') throw new Error('vitest setup export missing');
 if (typeof jestSetup !== 'function') throw new Error('jest setup export missing');
 if (typeof jestTeardown !== 'function') throw new Error('jest-teardown export missing');
 if (typeof loadTestEnv !== 'function') throw new Error('loadTestEnv export missing');
+if (typeof loadDevEnv !== 'function') throw new Error('loadDevEnv export missing');
+if (typeof envFilePath !== 'function') throw new Error('envFilePath export missing');
 if (STATE_DIRNAME !== '.cedarpg') throw new Error('bad STATE_DIRNAME ' + STATE_DIRNAME);
 if (typeof markTemplate !== 'function') throw new Error('missing markTemplate');
 if (typeof cloneFromTemplate !== 'function') throw new Error('missing cloneFromTemplate');
@@ -86,6 +103,9 @@ const help = run("node", [join(tmp, "node_modules", PACKAGE_NAME, "dist/cli.mjs"
 });
 if (!help.stdout?.includes(`${CLI_BIN} ensure`)) {
   throw new Error(`CLI help missing ${CLI_BIN} ensure`);
+}
+if (!help.stdout?.includes(`${CLI_BIN} run`)) {
+  throw new Error(`CLI help missing ${CLI_BIN} run`);
 }
 
 console.log("==> published files exclude smoke harness");

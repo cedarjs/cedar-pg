@@ -78,6 +78,11 @@
       "import": "./dist/test-env.mjs",
       "require": "./dist/test-env.cjs"
     },
+    "./dev-env": {
+      "types": "./dist/dev-env.d.mts",
+      "import": "./dist/dev-env.mjs",
+      "require": "./dist/dev-env.cjs"
+    },
     "./jest/template": {
       "types": "./dist/jest-template.d.mts",
       "import": "./dist/jest-template.mjs",

@@ -15,6 +15,7 @@ export default defineConfig({
       jest: "src/adapters/jest.ts",
       "jest-teardown": "src/adapters/jest-teardown.ts",
       "test-env": "src/adapters/test-env.ts",
+      "dev-env": "src/adapters/dev-env.ts",
       "jest-template": "src/adapters/jest-template.ts",
     },
 
