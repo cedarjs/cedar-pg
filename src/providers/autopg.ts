@@ -226,19 +226,60 @@ export async function cloneDatabaseFromTemplate(opts: {
   });
 }
 
-/** Datnames owned by role (for dispose/GC of TEMPLATE clones). */
-export async function listDatabasesOwnedByRole(opts: {
+async function listOwnedDatnames(client: pg.Client, roleName: string): Promise<string[]> {
+  const result = await client.query<{ datname: string }>(
+    `SELECT datname FROM pg_database
+     WHERE datdba = (SELECT oid FROM pg_roles WHERE rolname = $1)
+     ORDER BY datname`,
+    [roleName],
+  );
+  return result.rows.map((r) => r.datname);
+}
+
+/** Unset IS_TEMPLATE if needed, terminate backends, DROP DATABASE (no-op if missing). */
+async function dropOneDatabase(client: pg.Client, databaseName: string): Promise<void> {
+  const db = await client.query<{ datistemplate: boolean }>(
+    `SELECT datistemplate FROM pg_database WHERE datname = $1`,
+    [databaseName],
+  );
+  if (!db.rowCount || db.rowCount === 0) return;
+  if (db.rows[0]?.datistemplate) {
+    await client.query(`ALTER DATABASE ${quoteIdent(databaseName)} WITH IS_TEMPLATE false`);
+  }
+  await client.query(
+    `
+    SELECT pg_terminate_backend(pid)
+    FROM pg_stat_activity
+    WHERE datname = $1 AND pid <> pg_backend_pid()
+    `,
+    [databaseName],
+  );
+  await client.query(`DROP DATABASE IF EXISTS ${quoteIdent(databaseName)}`);
+}
+
+/**
+ * DROP every database owned by `roleName` on one admin connection, then DROP ROLE.
+ * When `preferLast` is owned, it is dropped after the other owned datnames (TEMPLATE after clones).
+ * Never invents a DROP target beyond role ownership.
+ */
+export async function dropDatabasesOwnedByRole(opts: {
   adminUrl: string;
   roleName: string;
+  preferLast?: string;
 }): Promise<string[]> {
   return withAdminClient(opts.adminUrl, async (client) => {
-    const result = await client.query<{ datname: string }>(
-      `SELECT datname FROM pg_database
-       WHERE datdba = (SELECT oid FROM pg_roles WHERE rolname = $1)
-       ORDER BY datname`,
-      [opts.roleName],
-    );
-    return result.rows.map((r) => r.datname);
+    const owned = await listOwnedDatnames(client, opts.roleName);
+    const ordered = [
+      ...owned.filter((name) => name !== opts.preferLast),
+      ...owned.filter((name) => name === opts.preferLast),
+    ];
+    const dropped: string[] = [];
+    for (const databaseName of ordered) {
+      await dropOneDatabase(client, databaseName);
+      dropped.push(databaseName);
+    }
+    await client.query(`DROP ROLE IF EXISTS ${quoteIdent(opts.roleName)}`);
+    return dropped;
   });
 }
 
@@ -252,26 +293,7 @@ export async function dropDatabase(opts: {
   roleName: string;
 }): Promise<void> {
   await withAdminClient(opts.adminUrl, async (client) => {
-    const db = await client.query<{ datistemplate: boolean }>(
-      `SELECT datistemplate FROM pg_database WHERE datname = $1`,
-      [opts.databaseName],
-    );
-    if (db.rowCount && db.rowCount > 0) {
-      if (db.rows[0]?.datistemplate) {
-        await client.query(
-          `ALTER DATABASE ${quoteIdent(opts.databaseName)} WITH IS_TEMPLATE false`,
-        );
-      }
-      await client.query(
-        `
-        SELECT pg_terminate_backend(pid)
-        FROM pg_stat_activity
-        WHERE datname = $1 AND pid <> pg_backend_pid()
-        `,
-        [opts.databaseName],
-      );
-      await client.query(`DROP DATABASE IF EXISTS ${quoteIdent(opts.databaseName)}`);
-    }
+    await dropOneDatabase(client, opts.databaseName);
     const owns = await client.query(
       `SELECT 1 FROM pg_database WHERE datdba = (SELECT oid FROM pg_roles WHERE rolname = $1) LIMIT 1`,
       [opts.roleName],

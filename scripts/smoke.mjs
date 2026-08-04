@@ -36,6 +36,7 @@ run(
 import {
   buildDatabaseName,
   cloneFromTemplate,
+  cloneFromTemplateIfNeeded,
   loadTestEnv,
   markTemplate,
   STATE_DIRNAME,
@@ -45,9 +46,14 @@ import vitestSetup from '${PACKAGE_NAME}/vitest';
 import jestSetup from '${PACKAGE_NAME}/jest';
 import jestTeardown from '${PACKAGE_NAME}/jest-teardown';
 import '${PACKAGE_NAME}/test-env';
-import jestTemplate from '${PACKAGE_NAME}/jest/template';
-import { ensureWorkerDatabase } from '${PACKAGE_NAME}/jest/template/worker';
-import vitestTemplate from '${PACKAGE_NAME}/vitest/template';
+import {
+  createGlobalSetup as createJestTemplateSetup,
+  ensureWorkerDatabase,
+} from '${PACKAGE_NAME}/jest/template';
+import {
+  createGlobalSetup as createVitestTemplateSetup,
+  ensureWorkerDatabase as ensureVitestWorkerDatabase,
+} from '${PACKAGE_NAME}/vitest/template';
 const name = buildDatabaseName(
   { root: '/tmp/x', repoSlug: 'cedar', worktreeSlug: 'feat', pathHash: 'abcd1234' },
   'dev',
@@ -62,9 +68,11 @@ if (typeof loadTestEnv !== 'function') throw new Error('loadTestEnv export missi
 if (STATE_DIRNAME !== '.cedarpg') throw new Error('bad STATE_DIRNAME ' + STATE_DIRNAME);
 if (typeof markTemplate !== 'function') throw new Error('missing markTemplate');
 if (typeof cloneFromTemplate !== 'function') throw new Error('missing cloneFromTemplate');
-if (typeof jestTemplate !== 'function') throw new Error('missing jest/template');
-if (typeof ensureWorkerDatabase !== 'function') throw new Error('missing jest/template/worker');
-if (typeof vitestTemplate !== 'function') throw new Error('missing vitest/template');
+if (typeof cloneFromTemplateIfNeeded !== 'function') throw new Error('missing cloneFromTemplateIfNeeded');
+if (typeof createJestTemplateSetup !== 'function') throw new Error('missing jest/template createGlobalSetup');
+if (typeof ensureWorkerDatabase !== 'function') throw new Error('missing jest/template ensureWorkerDatabase');
+if (typeof createVitestTemplateSetup !== 'function') throw new Error('missing vitest/template createGlobalSetup');
+if (typeof ensureVitestWorkerDatabase !== 'function') throw new Error('missing vitest/template ensureWorkerDatabase');
 console.log('ok', name, STATE_DIRNAME, Object.keys(tasks).join(','));
 `,
   ],

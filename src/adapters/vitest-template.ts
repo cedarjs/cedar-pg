@@ -1,48 +1,55 @@
-import { dispose } from "../core/lifecycle.ts";
 import {
-  requireMigrateFromEnv,
+  ensureWorkerDatabase,
   setupTemplateMode,
   type SetupTemplateModeOptions,
+} from "./template-mode.ts";
+
+export { ensureWorkerDatabase };
+export type {
+  SetupTemplateModeOptions,
+  TemplateMigrateFn,
+  TemplateMigrateContext,
 } from "./template-mode.ts";
 
 /**
  * Vitest globalSetup (template mode). Returns teardown that disposes TEMPLATE + clones.
  *
  * ```ts
+ * // vitest.cedar-global.ts
+ * import { createGlobalSetup } from "@cedarjs/pg/vitest/template";
+ * export default createGlobalSetup({ migrate: async ({ databaseUrl }) => {} });
+ *
  * // vitest.config.ts
  * export default defineConfig({
  *   test: {
- *     globalSetup: ["@cedarjs/pg/vitest/template"],
- *     // Local ESM file — pack emits CJS+ESM; do not point setupFiles at the packaged worker.
+ *     globalSetup: ["./vitest.cedar-global.ts"],
  *     setupFiles: ["./vitest.cedar-worker.ts"],
  *   },
  * })
  *
- * // vitest.cedar-worker.ts
- * import { ensureWorkerDatabase } from "@cedarjs/pg/vitest/template/worker";
+ * // vitest.cedar-worker.ts — local ESM (pack emits CJS+ESM; top-level await lives here)
+ * import { ensureWorkerDatabase } from "@cedarjs/pg/vitest/template";
  * await ensureWorkerDatabase();
  * ```
  *
- * Requires `CEDAR_PG_MIGRATE` or `createGlobalSetup({ migrate })`.
+ * Stock `@cedarjs/pg/vitest` is one shared test DB only.
  */
-export async function setup(): Promise<() => Promise<void>> {
-  return runSetup({ migrate: await requireMigrateFromEnv() });
-}
-
-/** Build a Vitest globalSetup with an in-process migrate hook. */
 export function createGlobalSetup(options: SetupTemplateModeOptions) {
-  return async () => runSetup(options);
-}
-
-async function runSetup(options: SetupTemplateModeOptions): Promise<() => Promise<void>> {
-  const result = await setupTemplateMode(options);
-  if (result.status !== "ensured") {
-    return async () => {};
-  }
-  const root = result.root;
   return async () => {
-    await dispose({ root, mode: "test" });
+    const result = await setupTemplateMode(options);
+    if (result.status !== "ensured") {
+      return async () => {};
+    }
+    return async () => {
+      await result.dispose();
+    };
   };
 }
 
-export default setup;
+/** String path without a migrate hook is unsupported — use `createGlobalSetup`. */
+export default async function setup(): Promise<() => Promise<void>> {
+  throw new Error(
+    "@cedarjs/pg/vitest/template requires createGlobalSetup({ migrate }). " +
+      "Point globalSetup at a local module that exports createGlobalSetup({ migrate }).",
+  );
+}

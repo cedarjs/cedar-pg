@@ -1,9 +1,8 @@
 import { expect, test, vi } from "vite-plus/test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
-import type { EnsureIfNeededResult } from "../src/core/lifecycle.ts";
+import type {
+  CloneFromTemplateIfNeededResult,
+  EnsureIfNeededResult,
+} from "../src/core/lifecycle.ts";
 
 function ensuredLease(
   overrides: Partial<Extract<EnsureIfNeededResult, { status: "ensured" }>> = {},
@@ -21,6 +20,22 @@ function ensuredLease(
     mode: "test",
     port: 5433,
     dispose: async () => {},
+    ...overrides,
+  };
+}
+
+function clonedWorker(
+  overrides: Partial<Extract<CloneFromTemplateIfNeededResult, { status: "cloned" }>> = {},
+): Extract<CloneFromTemplateIfNeededResult, { status: "cloned" }> {
+  return {
+    status: "cloned",
+    databaseUrl: "postgresql://role:pw@127.0.0.1:5433/cpg_tmpl_c_3",
+    adminUrl: "postgresql://postgres:postgres@127.0.0.1:5433/postgres",
+    databaseName: "cpg_tmpl_c_3",
+    roleName: "cpg_tmpl_role",
+    templateName: "cpg_tmpl",
+    port: 5433,
+    dropClone: async () => {},
     ...overrides,
   };
 }
@@ -83,6 +98,53 @@ test("setupTemplateMode ensures, migrates, then markTemplate", async () => {
   });
 });
 
+test("setupTemplateMode disposes and wraps markTemplate failure after migrate", async () => {
+  const ensureIfNeeded = vi.fn(async () => ensuredLease());
+  const markTemplate = vi.fn(async () => {
+    throw new Error("permission denied");
+  });
+  const dispose = vi.fn(async () => ({
+    dropped: true as const,
+    databaseName: "cpg_tmpl",
+    droppedDatabases: ["cpg_tmpl"],
+  }));
+  const migrate = vi.fn(async () => {});
+
+  await withMockedLifecycle({ ensureIfNeeded, markTemplate, dispose }, async () => {
+    const { setupTemplateMode } = await import("../src/adapters/template-mode.ts");
+    await expect(setupTemplateMode({ migrate })).rejects.toThrow(
+      /template setup failed after ensure; cleaned up lease DB \(cpg_tmpl\).*permission denied/,
+    );
+    expect(migrate).toHaveBeenCalledTimes(1);
+    expect(dispose).toHaveBeenCalledWith({ root: "/tmp/wt", mode: "test" });
+  });
+});
+
+test("setupTemplateMode disposes when migrate fails before markTemplate", async () => {
+  const ensureIfNeeded = vi.fn(async () => ensuredLease());
+  const markTemplate = vi.fn(async () => ({
+    databaseName: "cpg_tmpl",
+    adminUrl: "postgresql://postgres:postgres@127.0.0.1:5433/postgres",
+  }));
+  const dispose = vi.fn(async () => ({
+    dropped: true as const,
+    databaseName: "cpg_tmpl",
+    droppedDatabases: ["cpg_tmpl"],
+  }));
+  const migrate = vi.fn(async () => {
+    throw new Error("migrate boom");
+  });
+
+  await withMockedLifecycle({ ensureIfNeeded, markTemplate, dispose }, async () => {
+    const { setupTemplateMode } = await import("../src/adapters/template-mode.ts");
+    await expect(setupTemplateMode({ migrate })).rejects.toThrow(
+      /template setup failed after ensure; cleaned up lease DB \(cpg_tmpl\).*migrate boom/,
+    );
+    expect(markTemplate).not.toHaveBeenCalled();
+    expect(dispose).toHaveBeenCalledWith({ root: "/tmp/wt", mode: "test" });
+  });
+});
+
 test("setupTemplateMode skips migrate/mark when ensure is skipped", async () => {
   const ensureIfNeeded = vi.fn(async () => ({
     status: "skipped" as const,
@@ -103,24 +165,13 @@ test("setupTemplateMode skips migrate/mark when ensure is skipped", async () => 
   });
 });
 
-test("ensureWorkerDatabase clones via cloneFromTemplateIfNeeded", async () => {
+test("ensureWorkerDatabase clones via cloneFromTemplateIfNeeded with setEnv true", async () => {
   const prevJest = process.env.JEST_WORKER_ID;
   const prevCedar = process.env.CEDAR_PG;
-  const prevUrl = process.env.TEST_DATABASE_URL;
   process.env.JEST_WORKER_ID = "3";
   delete process.env.CEDAR_PG;
-  delete process.env.TEST_DATABASE_URL;
 
-  const cloneFromTemplateIfNeeded = vi.fn(async () => ({
-    status: "cloned" as const,
-    databaseUrl: "postgresql://role:pw@127.0.0.1:5433/cpg_tmpl_c_3",
-    adminUrl: "postgresql://postgres:postgres@127.0.0.1:5433/postgres",
-    databaseName: "cpg_tmpl_c_3",
-    roleName: "cpg_tmpl_role",
-    templateName: "cpg_tmpl",
-    port: 5433,
-    dispose: async () => {},
-  }));
+  const cloneFromTemplateIfNeeded = vi.fn(async () => clonedWorker());
 
   try {
     await withMockedLifecycle({ cloneFromTemplateIfNeeded }, async () => {
@@ -138,29 +189,18 @@ test("ensureWorkerDatabase clones via cloneFromTemplateIfNeeded", async () => {
     else process.env.JEST_WORKER_ID = prevJest;
     if (prevCedar === undefined) delete process.env.CEDAR_PG;
     else process.env.CEDAR_PG = prevCedar;
-    if (prevUrl === undefined) delete process.env.TEST_DATABASE_URL;
-    else process.env.TEST_DATABASE_URL = prevUrl;
   }
 });
 
 test("ensureWorkerDatabase is idempotent per process", async () => {
-  const prevCedar = process.env.CEDAR_PG;
-  const prevUrl = process.env.TEST_DATABASE_URL;
   const prevJest = process.env.JEST_WORKER_ID;
-  delete process.env.CEDAR_PG;
-  delete process.env.TEST_DATABASE_URL;
+  const prevCedar = process.env.CEDAR_PG;
   process.env.JEST_WORKER_ID = "1";
+  delete process.env.CEDAR_PG;
 
-  const cloneFromTemplateIfNeeded = vi.fn(async () => ({
-    status: "cloned" as const,
-    databaseUrl: "postgresql://role:pw@127.0.0.1:5433/cpg_tmpl_c_1",
-    adminUrl: "postgresql://postgres:postgres@127.0.0.1:5433/postgres",
-    databaseName: "cpg_tmpl_c_1",
-    roleName: "cpg_tmpl_role",
-    templateName: "cpg_tmpl",
-    port: 5433,
-    dispose: async () => {},
-  }));
+  const cloneFromTemplateIfNeeded = vi.fn(async () =>
+    clonedWorker({ databaseName: "cpg_tmpl_c_1" }),
+  );
 
   try {
     await withMockedLifecycle({ cloneFromTemplateIfNeeded }, async () => {
@@ -170,29 +210,54 @@ test("ensureWorkerDatabase is idempotent per process", async () => {
       expect(cloneFromTemplateIfNeeded).toHaveBeenCalledTimes(1);
     });
   } finally {
-    if (prevCedar === undefined) delete process.env.CEDAR_PG;
-    else process.env.CEDAR_PG = prevCedar;
-    if (prevUrl === undefined) delete process.env.TEST_DATABASE_URL;
-    else process.env.TEST_DATABASE_URL = prevUrl;
     if (prevJest === undefined) delete process.env.JEST_WORKER_ID;
     else process.env.JEST_WORKER_ID = prevJest;
+    if (prevCedar === undefined) delete process.env.CEDAR_PG;
+    else process.env.CEDAR_PG = prevCedar;
   }
 });
 
-test("vitest template teardown disposes lease root", async () => {
-  const ensureIfNeeded = vi.fn(async () => ensuredLease());
+test("ensureWorkerDatabase rejects conflicting root/name after first call", async () => {
+  const prevJest = process.env.JEST_WORKER_ID;
+  const prevCedar = process.env.CEDAR_PG;
+  process.env.JEST_WORKER_ID = "1";
+  delete process.env.CEDAR_PG;
+
+  const cloneFromTemplateIfNeeded = vi.fn(async () =>
+    clonedWorker({ databaseName: "cpg_tmpl_c_1" }),
+  );
+
+  try {
+    await withMockedLifecycle({ cloneFromTemplateIfNeeded }, async () => {
+      const { ensureWorkerDatabase } = await import("../src/adapters/template-mode.ts");
+      await ensureWorkerDatabase({ root: "/tmp/a" });
+      expect(() => ensureWorkerDatabase({ root: "/tmp/b" })).toThrow(
+        /already started with different root\/name/,
+      );
+      expect(cloneFromTemplateIfNeeded).toHaveBeenCalledTimes(1);
+    });
+  } finally {
+    if (prevJest === undefined) delete process.env.JEST_WORKER_ID;
+    else process.env.JEST_WORKER_ID = prevJest;
+    if (prevCedar === undefined) delete process.env.CEDAR_PG;
+    else process.env.CEDAR_PG = prevCedar;
+  }
+});
+
+test("vitest template teardown uses EnsureResult.dispose", async () => {
+  const disposeFn = vi.fn(async () => {});
+  const ensureIfNeeded = vi.fn(async () => ensuredLease({ dispose: disposeFn }));
   const markTemplate = vi.fn(async () => ({
     databaseName: "cpg_tmpl",
     adminUrl: "postgresql://postgres:postgres@127.0.0.1:5433/postgres",
   }));
-  const dispose = vi.fn(async () => ({ dropped: false as const, reason: "no-lease" as const }));
   const migrate = vi.fn(async () => {});
 
-  await withMockedLifecycle({ ensureIfNeeded, markTemplate, dispose }, async () => {
+  await withMockedLifecycle({ ensureIfNeeded, markTemplate }, async () => {
     const { createGlobalSetup } = await import("../src/adapters/vitest-template.ts");
     const teardown = await createGlobalSetup({ migrate })();
     await teardown();
-    expect(dispose).toHaveBeenCalledWith({ root: "/tmp/wt", mode: "test" });
+    expect(disposeFn).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -212,42 +277,22 @@ test("jest createGlobalSetup wires migrate hook", async () => {
   });
 });
 
-test("jest template default requires CEDAR_PG_MIGRATE", async () => {
-  const prev = process.env.CEDAR_PG_MIGRATE;
-  delete process.env.CEDAR_PG_MIGRATE;
-  try {
-    vi.resetModules();
-    const mod = await import("../src/adapters/jest-template.ts");
-    await expect(mod.default()).rejects.toThrow(/CEDAR_PG_MIGRATE|createGlobalSetup/);
-  } finally {
-    if (prev === undefined) delete process.env.CEDAR_PG_MIGRATE;
-    else process.env.CEDAR_PG_MIGRATE = prev;
-    vi.resetModules();
-  }
+test("jest template default export requires createGlobalSetup", async () => {
+  vi.resetModules();
+  const mod = await import("../src/adapters/jest-template.ts");
+  await expect(mod.default()).rejects.toThrow(/createGlobalSetup/);
+  vi.resetModules();
 });
 
-test("jest template default export uses CEDAR_PG_MIGRATE", async () => {
-  const ensureIfNeeded = vi.fn(async () => ensuredLease());
-  const markTemplate = vi.fn(async () => ({
-    databaseName: "cpg_tmpl",
-    adminUrl: "postgresql://postgres:postgres@127.0.0.1:5433/postgres",
-  }));
+test("vitest template default export requires createGlobalSetup", async () => {
+  vi.resetModules();
+  const mod = await import("../src/adapters/vitest-template.ts");
+  await expect(mod.default()).rejects.toThrow(/createGlobalSetup/);
+  vi.resetModules();
+});
 
-  const dir = mkdtempSync(join(tmpdir(), "cedarpg-migrate-"));
-  const file = join(dir, "migrate.mjs");
-  writeFileSync(file, `export default async function migrate() {}\n`);
-  const prev = process.env.CEDAR_PG_MIGRATE;
-  process.env.CEDAR_PG_MIGRATE = pathToFileURL(file).href;
-
-  try {
-    await withMockedLifecycle({ ensureIfNeeded, markTemplate }, async () => {
-      const mod = await import("../src/adapters/jest-template.ts");
-      await mod.default();
-      expect(markTemplate).toHaveBeenCalledTimes(1);
-    });
-  } finally {
-    if (prev === undefined) delete process.env.CEDAR_PG_MIGRATE;
-    else process.env.CEDAR_PG_MIGRATE = prev;
-    rmSync(dir, { recursive: true, force: true });
-  }
+test("jest template re-exports ensureWorkerDatabase", async () => {
+  const { ensureWorkerDatabase: fromJest } = await import("../src/adapters/jest-template.ts");
+  const { ensureWorkerDatabase: fromMode } = await import("../src/adapters/template-mode.ts");
+  expect(fromJest).toBe(fromMode);
 });

@@ -63,8 +63,7 @@ test("dispose removes mode env after successful DROP", async () => {
     );
     return {
       ...actual,
-      listDatabasesOwnedByRole: vi.fn(async () => ["cpg_cedar_main_test_disposeenv"]),
-      dropDatabase: vi.fn(async () => {}),
+      dropDatabasesOwnedByRole: vi.fn(async () => ["cpg_cedar_main_test_disposeenv"]),
     };
   });
 
@@ -123,7 +122,7 @@ test("dispose leaves lease+registry when host is unavailable", async () => {
     );
     return {
       ...actual,
-      dropDatabase: vi.fn(),
+      dropDatabasesOwnedByRole: vi.fn(),
     };
   });
 
@@ -144,7 +143,7 @@ test("dispose leaves lease+registry when host is unavailable", async () => {
 
     expect(readLease(root, "test")).toEqual(lease);
     expect(listRegistryLeases().map((l) => l.databaseName)).toContain(lease.databaseName);
-    expect(autopg.dropDatabase).not.toHaveBeenCalled();
+    expect(autopg.dropDatabasesOwnedByRole).not.toHaveBeenCalled();
   } finally {
     vi.doUnmock("../src/providers/host.ts");
     vi.doUnmock("../src/providers/autopg.ts");

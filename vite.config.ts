@@ -12,12 +12,10 @@ export default defineConfig({
       nx: "src/adapters/nx.ts",
       vitest: "src/adapters/vitest.ts",
       "vitest-template": "src/adapters/vitest-template.ts",
-      "vitest-template-worker": "src/adapters/vitest-template-worker.ts",
       jest: "src/adapters/jest.ts",
       "jest-teardown": "src/adapters/jest-teardown.ts",
       "test-env": "src/adapters/test-env.ts",
       "jest-template": "src/adapters/jest-template.ts",
-      "jest-template-worker": "src/adapters/jest-template-worker.ts",
     },
 
     dts: true,

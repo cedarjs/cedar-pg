@@ -63,11 +63,6 @@
       "import": "./dist/vitest-template.mjs",
       "require": "./dist/vitest-template.cjs"
     },
-    "./vitest/template/worker": {
-      "types": "./dist/vitest-template-worker.d.mts",
-      "import": "./dist/vitest-template-worker.mjs",
-      "require": "./dist/vitest-template-worker.cjs"
-    },
     "./jest": {
       "types": "./dist/jest.d.mts",
       "import": "./dist/jest.mjs",
@@ -87,11 +82,6 @@
       "types": "./dist/jest-template.d.mts",
       "import": "./dist/jest-template.mjs",
       "require": "./dist/jest-template.cjs"
-    },
-    "./jest/template/worker": {
-      "types": "./dist/jest-template-worker.d.mts",
-      "import": "./dist/jest-template-worker.mjs",
-      "require": "./dist/jest-template-worker.cjs"
     },
     "./package.json": "./package.json"
   },
