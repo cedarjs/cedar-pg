@@ -310,8 +310,8 @@ await dispose({ root: ensured.root, mode: "test" }); // role-scoped: TEMPLATE + 
 ```
 
 `ensure` returns `adminUrl` for migrate hooks / privileged DDL; `markTemplate` / `cloneFromTemplate` accept it or rediscover the host when omitted.
-`cloneFromTemplate` uses the admin connection internally (`CREATE DATABASE … TEMPLATE`); test roles stay `LOGIN`-only. `setEnv` defaults to false on the core API (worker adapters pass true).
-Worker adapters call `cloneFromTemplateIfNeeded` (same skip policy as `ensureIfNeeded`) via `ensureWorkerDatabase`.
+`cloneFromTemplate` uses the admin connection internally (`CREATE DATABASE … TEMPLATE`); test roles stay `LOGIN`-only. `setEnv` defaults to false on `cloneFromTemplate`; `cloneFromTemplateIfNeeded` defaults true (same as `ensureIfNeeded`).
+Worker adapters call `cloneFromTemplateIfNeeded` (shared skip policy via `runIfNeeded`) via `ensureWorkerDatabase`.
 `dispose` is role-scoped suite teardown (not `dropClone`): unsets `IS_TEMPLATE` and drops every database owned by the lease role.
 
 ## Env

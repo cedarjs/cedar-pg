@@ -1,10 +1,5 @@
-import {
-  cloneFromTemplateIfNeeded,
-  dispose,
-  ensureIfNeeded,
-  markTemplate,
-  type EnsureIfNeededResult,
-} from "../core/lifecycle.ts";
+import { dispose, ensureIfNeeded, type EnsureIfNeededResult } from "../core/lifecycle.ts";
+import { cloneFromTemplateIfNeeded, markTemplate } from "../core/template.ts";
 
 export type TemplateMigrateContext = {
   databaseUrl: string;

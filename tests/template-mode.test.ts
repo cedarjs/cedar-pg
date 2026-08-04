@@ -1,8 +1,6 @@
 import { expect, test, vi } from "vite-plus/test";
-import type {
-  CloneFromTemplateIfNeededResult,
-  EnsureIfNeededResult,
-} from "../src/core/lifecycle.ts";
+import type { EnsureIfNeededResult } from "../src/core/lifecycle.ts";
+import type { CloneFromTemplateIfNeededResult } from "../src/core/template.ts";
 
 function ensuredLease(
   overrides: Partial<Extract<EnsureIfNeededResult, { status: "ensured" }>> = {},
@@ -40,7 +38,7 @@ function clonedWorker(
   };
 }
 
-async function withMockedLifecycle<T>(
+async function withMockedCore<T>(
   mocks: {
     ensureIfNeeded?: ReturnType<typeof vi.fn>;
     markTemplate?: ReturnType<typeof vi.fn>;
@@ -57,16 +55,24 @@ async function withMockedLifecycle<T>(
     return {
       ...actual,
       ensureIfNeeded: mocks.ensureIfNeeded ?? actual.ensureIfNeeded,
+      dispose: mocks.dispose ?? actual.dispose,
+    };
+  });
+  vi.doMock("../src/core/template.ts", async () => {
+    const actual =
+      await vi.importActual<typeof import("../src/core/template.ts")>("../src/core/template.ts");
+    return {
+      ...actual,
       markTemplate: mocks.markTemplate ?? actual.markTemplate,
       cloneFromTemplateIfNeeded:
         mocks.cloneFromTemplateIfNeeded ?? actual.cloneFromTemplateIfNeeded,
-      dispose: mocks.dispose ?? actual.dispose,
     };
   });
   try {
     return await run();
   } finally {
     vi.doUnmock("../src/core/lifecycle.ts");
+    vi.doUnmock("../src/core/template.ts");
     vi.resetModules();
   }
 }
@@ -79,7 +85,7 @@ test("setupTemplateMode ensures, migrates, then markTemplate", async () => {
   }));
   const migrate = vi.fn(async () => {});
 
-  await withMockedLifecycle({ ensureIfNeeded, markTemplate }, async () => {
+  await withMockedCore({ ensureIfNeeded, markTemplate }, async () => {
     const { setupTemplateMode } = await import("../src/adapters/template-mode.ts");
     const result = await setupTemplateMode({ migrate, setEnv: false });
     expect(result.status).toBe("ensured");
@@ -110,7 +116,7 @@ test("setupTemplateMode disposes and wraps markTemplate failure after migrate", 
   }));
   const migrate = vi.fn(async () => {});
 
-  await withMockedLifecycle({ ensureIfNeeded, markTemplate, dispose }, async () => {
+  await withMockedCore({ ensureIfNeeded, markTemplate, dispose }, async () => {
     const { setupTemplateMode } = await import("../src/adapters/template-mode.ts");
     await expect(setupTemplateMode({ migrate })).rejects.toThrow(
       /template setup failed after ensure; cleaned up lease DB \(cpg_tmpl\).*permission denied/,
@@ -135,7 +141,7 @@ test("setupTemplateMode disposes when migrate fails before markTemplate", async 
     throw new Error("migrate boom");
   });
 
-  await withMockedLifecycle({ ensureIfNeeded, markTemplate, dispose }, async () => {
+  await withMockedCore({ ensureIfNeeded, markTemplate, dispose }, async () => {
     const { setupTemplateMode } = await import("../src/adapters/template-mode.ts");
     await expect(setupTemplateMode({ migrate })).rejects.toThrow(
       /template setup failed after ensure; cleaned up lease DB \(cpg_tmpl\).*migrate boom/,
@@ -156,7 +162,7 @@ test("setupTemplateMode skips migrate/mark when ensure is skipped", async () => 
   }));
   const migrate = vi.fn(async () => {});
 
-  await withMockedLifecycle({ ensureIfNeeded, markTemplate }, async () => {
+  await withMockedCore({ ensureIfNeeded, markTemplate }, async () => {
     const { setupTemplateMode } = await import("../src/adapters/template-mode.ts");
     const result = await setupTemplateMode({ migrate });
     expect(result).toEqual({ status: "skipped", reason: "disabled" });
@@ -174,7 +180,7 @@ test("ensureWorkerDatabase clones via cloneFromTemplateIfNeeded with setEnv true
   const cloneFromTemplateIfNeeded = vi.fn(async () => clonedWorker());
 
   try {
-    await withMockedLifecycle({ cloneFromTemplateIfNeeded }, async () => {
+    await withMockedCore({ cloneFromTemplateIfNeeded }, async () => {
       const { ensureWorkerDatabase } = await import("../src/adapters/template-mode.ts");
       await ensureWorkerDatabase({ root: "/tmp/wt" });
       expect(cloneFromTemplateIfNeeded).toHaveBeenCalledWith({
@@ -203,7 +209,7 @@ test("ensureWorkerDatabase is idempotent per process", async () => {
   );
 
   try {
-    await withMockedLifecycle({ cloneFromTemplateIfNeeded }, async () => {
+    await withMockedCore({ cloneFromTemplateIfNeeded }, async () => {
       const { ensureWorkerDatabase } = await import("../src/adapters/template-mode.ts");
       await ensureWorkerDatabase();
       await ensureWorkerDatabase();
@@ -228,7 +234,7 @@ test("ensureWorkerDatabase rejects conflicting root/name after first call", asyn
   );
 
   try {
-    await withMockedLifecycle({ cloneFromTemplateIfNeeded }, async () => {
+    await withMockedCore({ cloneFromTemplateIfNeeded }, async () => {
       const { ensureWorkerDatabase } = await import("../src/adapters/template-mode.ts");
       await ensureWorkerDatabase({ root: "/tmp/a" });
       expect(() => ensureWorkerDatabase({ root: "/tmp/b" })).toThrow(
@@ -253,7 +259,7 @@ test("vitest template teardown uses EnsureResult.dispose", async () => {
   }));
   const migrate = vi.fn(async () => {});
 
-  await withMockedLifecycle({ ensureIfNeeded, markTemplate }, async () => {
+  await withMockedCore({ ensureIfNeeded, markTemplate }, async () => {
     const { createGlobalSetup } = await import("../src/adapters/vitest-template.ts");
     const teardown = await createGlobalSetup({ migrate })();
     await teardown();
@@ -269,7 +275,7 @@ test("jest createGlobalSetup wires migrate hook", async () => {
   }));
   const migrate = vi.fn(async () => {});
 
-  await withMockedLifecycle({ ensureIfNeeded, markTemplate }, async () => {
+  await withMockedCore({ ensureIfNeeded, markTemplate }, async () => {
     const { createGlobalSetup } = await import("../src/adapters/jest-template.ts");
     await createGlobalSetup({ migrate })();
     expect(migrate).toHaveBeenCalledTimes(1);

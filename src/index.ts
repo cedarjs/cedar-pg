@@ -1,26 +1,21 @@
-export {
-  ensure,
-  ensureIfNeeded,
-  markTemplate,
-  cloneFromTemplate,
-  cloneFromTemplateIfNeeded,
-  dispose,
-  gc,
-  urlFromLease,
-} from "./core/lifecycle.ts";
+export { ensure, ensureIfNeeded, dispose, gc, urlFromLease } from "./core/lifecycle.ts";
 export type {
   EnsureOptions,
   EnsureResult,
   EnsureIfNeededOptions,
   EnsureIfNeededResult,
+  DisposeOptions,
+  DisposeResult,
+} from "./core/lifecycle.ts";
+
+export { markTemplate, cloneFromTemplate, cloneFromTemplateIfNeeded } from "./core/template.ts";
+export type {
   MarkTemplateOptions,
   CloneFromTemplateOptions,
   CloneFromTemplateIfNeededOptions,
   CloneFromTemplateIfNeededResult,
   CloneResult,
-  DisposeOptions,
-  DisposeResult,
-} from "./core/lifecycle.ts";
+} from "./core/template.ts";
 
 export { resolveWorktreeIdentity, resolveRoot } from "./core/worktree.ts";
 export type { WorktreeIdentity } from "./core/worktree.ts";

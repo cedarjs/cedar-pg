@@ -33,6 +33,43 @@ export function applyDatabaseUrlEnv(
   }
 }
 
+export type RunIfNeededOptions = ResolveEnsureSkipInput & {
+  mode: "dev" | "test";
+  /** Default true (same as ensure / clone host wrappers). */
+  setEnv?: boolean;
+};
+
+export type RunIfNeededSkipped =
+  | { status: "skipped"; reason: "disabled" }
+  | { status: "skipped"; reason: "external-url"; databaseUrl: string };
+
+export type RunIfNeededResult<T> = RunIfNeededSkipped | { status: "ran"; value: T };
+
+/**
+ * Shared host skip+env gate for `ensureIfNeeded` / `cloneFromTemplateIfNeeded`.
+ * On external-url skip, applies env when `setEnv` is not false.
+ */
+export async function runIfNeeded<T>(
+  options: RunIfNeededOptions,
+  run: () => Promise<T>,
+): Promise<RunIfNeededResult<T>> {
+  const skip = resolveEnsureSkip({
+    url: options.url,
+    force: options.force,
+    disabled: options.disabled,
+  });
+  if (skip.skip) {
+    if (skip.reason === "external-url") {
+      if (options.setEnv !== false) {
+        applyDatabaseUrlEnv(skip.databaseUrl, { mode: options.mode });
+      }
+      return { status: "skipped", reason: "external-url", databaseUrl: skip.databaseUrl };
+    }
+    return { status: "skipped", reason: "disabled" };
+  }
+  return { status: "ran", value: await run() };
+}
+
 /**
  * True when the URL looks like a cedarpg provisioned database (`cpg_*` name/role).
  * These must never be treated as an external escape hatch; always re-ensure so

@@ -292,7 +292,7 @@ test("markTemplate requires a lease", async () => {
 
   vi.resetModules();
   try {
-    const { markTemplate } = await import("../src/core/lifecycle.ts");
+    const { markTemplate } = await import("../src/core/template.ts");
     await expect(
       markTemplate({
         root,
@@ -330,7 +330,7 @@ test("markTemplate + cloneFromTemplate rediscover adminUrl when omitted", async 
         cloneDatabaseFromTemplate: cloneDb,
       },
       async () => {
-        const { markTemplate, cloneFromTemplate } = await import("../src/core/lifecycle.ts");
+        const { markTemplate, cloneFromTemplate } = await import("../src/core/template.ts");
         await expect(markTemplate({ root, mode: "test" })).resolves.toEqual({
           databaseName: templateName,
           adminUrl,
@@ -370,7 +370,7 @@ test("cloneFromTemplateIfNeeded skips when CEDAR_PG disabled", async () => {
       "postgresql://postgres:postgres@127.0.0.1:5433/postgres",
       { cloneDatabaseFromTemplate: cloneDb },
       async () => {
-        const { cloneFromTemplateIfNeeded } = await import("../src/core/lifecycle.ts");
+        const { cloneFromTemplateIfNeeded } = await import("../src/core/template.ts");
         await expect(
           cloneFromTemplateIfNeeded({ mode: "test", name: "1", setEnv: true }),
         ).resolves.toEqual({ status: "skipped", reason: "disabled" });
@@ -398,7 +398,7 @@ test("cloneFromTemplateIfNeeded external-url skip applies DATABASE_URL env", asy
       "postgresql://postgres:postgres@127.0.0.1:5433/postgres",
       { cloneDatabaseFromTemplate: cloneDb },
       async () => {
-        const { cloneFromTemplateIfNeeded } = await import("../src/core/lifecycle.ts");
+        const { cloneFromTemplateIfNeeded } = await import("../src/core/template.ts");
         await expect(
           cloneFromTemplateIfNeeded({ mode: "test", name: "1", setEnv: true }),
         ).resolves.toEqual({
@@ -439,7 +439,7 @@ test("cloneFromTemplateIfNeeded clones when ensure policy allows", async () => {
 
   try {
     await withHostAndAutopgMocks(adminUrl, { cloneDatabaseFromTemplate: cloneDb }, async () => {
-      const { cloneFromTemplateIfNeeded } = await import("../src/core/lifecycle.ts");
+      const { cloneFromTemplateIfNeeded } = await import("../src/core/template.ts");
       const result = await cloneFromTemplateIfNeeded({
         root,
         mode: "test",
@@ -459,6 +459,54 @@ test("cloneFromTemplateIfNeeded clones when ensure policy allows", async () => {
     else process.env.CEDAR_PG = prevCedar;
     if (prevUrl === undefined) delete process.env.TEST_DATABASE_URL;
     else process.env.TEST_DATABASE_URL = prevUrl;
+    rmSync(registry, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cloneFromTemplateIfNeeded defaults setEnv on for clone path", async () => {
+  const registry = mkdtempSync(join(tmpdir(), "cedarpg-reg-"));
+  const root = mkdtempSync(join(tmpdir(), "cedarpg-wt-"));
+  const prev = process.env.CEDAR_PG_REGISTRY_DIR;
+  const prevCedar = process.env.CEDAR_PG;
+  const prevUrl = process.env.TEST_DATABASE_URL;
+  const prevDb = process.env.DATABASE_URL;
+  process.env.CEDAR_PG_REGISTRY_DIR = registry;
+  delete process.env.CEDAR_PG;
+  delete process.env.TEST_DATABASE_URL;
+  delete process.env.DATABASE_URL;
+
+  const adminUrl = "postgresql://postgres:postgres@127.0.0.1:5433/postgres";
+  const templateName = "cpg_cedar_main_test_ifneeded2";
+  writeLease(makeLease({ root, databaseName: templateName }));
+
+  try {
+    await withHostAndAutopgMocks(
+      adminUrl,
+      { cloneDatabaseFromTemplate: vi.fn(async () => {}) },
+      async () => {
+        const { cloneFromTemplateIfNeeded } = await import("../src/core/template.ts");
+        const result = await cloneFromTemplateIfNeeded({
+          root,
+          mode: "test",
+          adminUrl,
+          name: "8",
+        });
+        expect(result.status).toBe("cloned");
+        if (result.status !== "cloned") throw new Error("expected cloned");
+        expect(process.env.DATABASE_URL).toBe(result.databaseUrl);
+        expect(process.env.TEST_DATABASE_URL).toBe(result.databaseUrl);
+      },
+    );
+  } finally {
+    if (prev === undefined) delete process.env.CEDAR_PG_REGISTRY_DIR;
+    else process.env.CEDAR_PG_REGISTRY_DIR = prev;
+    if (prevCedar === undefined) delete process.env.CEDAR_PG;
+    else process.env.CEDAR_PG = prevCedar;
+    if (prevUrl === undefined) delete process.env.TEST_DATABASE_URL;
+    else process.env.TEST_DATABASE_URL = prevUrl;
+    if (prevDb === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = prevDb;
     rmSync(registry, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });
   }
