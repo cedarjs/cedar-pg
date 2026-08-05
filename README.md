@@ -4,7 +4,7 @@ Worktree-isolated local Postgres for **Vite+**, **Nx**, and **CedarJS**, powered
 
 Published on npm as **`@cedarjs/pg`**.
 
-> **Alpha** (`0.1.0-alpha.0`): APIs may change. Install with the `alpha` dist-tag.
+> **Alpha** (`0.2.0-alpha.0`): APIs may change. Install with the `alpha` dist-tag.
 
 ## What you get (via autopg)
 
@@ -87,7 +87,7 @@ vp pack
 
 # in your app / Cedar
 yarn add @cedarjs/pg@file:../cedar-pg
-# or: pnpm pack && yarn add ./cedarjs-pg-0.1.0-alpha.0.tgz
+# or: pnpm pack && yarn add ./cedarjs-pg-0.2.0-alpha.0.tgz
 ```
 
 ## CLI
