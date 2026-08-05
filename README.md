@@ -258,4 +258,4 @@ The action runs `scripts/ci-install-autopg.sh` under the hood. For published-pac
   CI runs `vp run smoke:pg` for Vitest/Jest adapters against real Postgres
   (ephemeral cold-start when the runner has no live host; attach-wins otherwise).
 - State lives in product-owned `.cedarpg` (worktree + `~/.cedarpg/registry`), not under autopg's `~/.autopg/` or a generic `.pg`.
-- Password salt (`cedar-pg\\0`, scheme v1) is an opaque crypto constant; bump the scheme id to change it.
+- Role passwords are derived from `roleName` (`cedar-pg\\0` + roleName, scheme v2) so TEMPLATE clones that reuse a role keep working; bump the scheme id to change the derivation.

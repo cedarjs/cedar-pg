@@ -26,4 +26,4 @@ Initial alpha of **cedar-pg**, published on npm as `@cedarjs/pg` (CLI: `cedarpg`
 
 - CLI binary: `cedarpg`; npm: `@cedarjs/pg`
 - State dirs: `.cedarpg` (worktree) and `~/.cedarpg/registry` (product-owned; not under `~/.autopg/`)
-- Password salt: opaque `cedar-pg\\0` (scheme v1); bump scheme id to change
+- Password salt: opaque `cedar-pg\\0` + `roleName` (scheme v2); bump scheme id to change

@@ -16,7 +16,7 @@ export const CLI_NAME = "cedarpg";
 export const STATE_DIRNAME = ".cedarpg";
 
 /**
- * Password scheme v1 salt prefix: sha256(`${PASSWORD_SALT_PREFIX}\0` + databaseName).
+ * Password scheme v2 salt prefix: sha256(`${PASSWORD_SALT_PREFIX}\0` + roleName).
  * Opaque; independent of STATE_DIRNAME / CLI_NAME. Bump ROLE_PASSWORD_SCHEME to change.
  */
 export const PASSWORD_SALT_PREFIX = "cedar-pg";
