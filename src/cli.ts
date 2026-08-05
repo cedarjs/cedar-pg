@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { CLI_NAME } from "./core/constants.ts";
-import { ensure, dispose, gc, urlFromLease } from "./core/lifecycle.ts";
+import { acquire, dispose, gc, urlFromLease } from "./core/lifecycle.ts";
 import { resolveWorktreeIdentity } from "./core/worktree.ts";
 import { readLease } from "./core/lease.ts";
 import type { DbMode } from "./core/naming.ts";
@@ -10,7 +10,7 @@ function printHelp(): void {
   process.stdout.write(`${CLI_NAME}: worktree-isolated local Postgres (via autopg)
 
 Usage:
-  ${CLI_NAME} ensure --mode=dev|test [--root <path>] [--force] [--json] [--print-env]
+  ${CLI_NAME} acquire --mode=dev|test [--root <path>] [--force] [--json] [--print-env]
   ${CLI_NAME} run --mode=dev|test [--root <path>] [--force] -- <cmd…>
   ${CLI_NAME} dispose [--mode=dev|test] [--root <path>]
   ${CLI_NAME} gc [--json]
@@ -18,16 +18,16 @@ Usage:
   ${CLI_NAME} --help
 
 Modes:
-  dev   Keep DB across restarts (default for ensure if omitted: dev)
+  dev   Keep DB across restarts (default when --mode omitted)
   test  Drop DB on dispose / test teardown
 
 run:
-  Ensure, set DATABASE_URL (+ TEST_DATABASE_URL in test) on the child, exec <cmd…>.
+  Acquire, set DATABASE_URL (+ TEST_DATABASE_URL in test) on the child, exec <cmd…>.
   --force sets CEDAR_PG_FORCE (escape hatch); child env overwrite is always on.
 
 Env:
   AUTOPG_BIN       Path to autopg binary
-  CEDAR_PG=0       Disable adapters that auto-ensure
+  CEDAR_PG=0       Disable adapters that auto-acquire
   CEDAR_PG_FORCE=1 Ignore external-URL escape hatch (same as --force)
 `);
 }
@@ -104,10 +104,10 @@ async function main(): Promise<number> {
   }
 
   try {
-    if (args.cmd === "ensure") {
+    if (args.cmd === "acquire") {
       if (args.force) process.env.CEDAR_PG_FORCE = "1";
       const mode = args.mode ?? "dev";
-      const result = await ensure({
+      const result = await acquire({
         root: args.root,
         mode,
         setEnv: true,
@@ -149,7 +149,7 @@ async function main(): Promise<number> {
     if (args.cmd === "run") {
       if (args.force) process.env.CEDAR_PG_FORCE = "1";
       const mode = args.mode ?? "dev";
-      const result = await ensure({
+      const result = await acquire({
         root: args.root,
         mode,
         setEnv: true,
@@ -196,7 +196,7 @@ async function main(): Promise<number> {
       const lease = readLease(identity.root, mode);
       if (!lease) {
         process.stderr.write(
-          `${CLI_NAME}: no ${mode} lease; run \`${CLI_NAME} ensure --mode=${mode}\` first\n`,
+          `${CLI_NAME}: no ${mode} lease; run \`${CLI_NAME} acquire --mode=${mode}\` first\n`,
         );
         return 2;
       }

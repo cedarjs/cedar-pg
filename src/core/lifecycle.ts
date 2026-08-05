@@ -10,7 +10,7 @@ import {
   writeLease,
   type Lease,
 } from "./lease.ts";
-import { applyDatabaseUrlEnv, runIfNeeded, type ResolveEnsureSkipInput } from "./policy.ts";
+import { applyDatabaseUrlEnv, runIfNeeded, type ResolveAcquireSkipInput } from "./policy.ts";
 import { resolveWorktreeIdentity } from "./worktree.ts";
 import { buildDatabaseUrl, dropDatabasesOwnedByRole, ensureDatabase } from "../providers/autopg.ts";
 import { ensureHostRunning } from "../providers/host.ts";
@@ -44,14 +44,14 @@ async function dropThenForget(lease: Lease, adminUrl: string): Promise<string[]>
   return dropped;
 }
 
-export type EnsureOptions = {
+export type AcquireOptions = {
   root?: string;
   mode: DbMode;
   /** Inject DATABASE_URL / TEST_DATABASE_URL into process.env (default true). */
   setEnv?: boolean;
 };
 
-export type EnsureResult = {
+export type AcquireResult = {
   databaseUrl: string;
   /** Superuser URL for privileged DDL (mark template, CREATE DATABASE … TEMPLATE). */
   adminUrl: string;
@@ -67,12 +67,12 @@ export type EnsureResult = {
 };
 
 /**
- * Ensure a worktree-scoped database exists and return connection info.
+ * Acquire a worktree-scoped database and return connection info.
  *
  * - `dev`: keep DB across restarts.
  * - `test`: DROP when `dispose()` is awaited (callers / test runners own teardown).
  */
-export async function ensure(options: EnsureOptions): Promise<EnsureResult> {
+export async function acquire(options: AcquireOptions): Promise<AcquireResult> {
   const identity = resolveWorktreeIdentity(options.root);
   const mode = options.mode;
   const databaseName = buildDatabaseName(identity, mode);
@@ -130,29 +130,29 @@ export async function ensure(options: EnsureOptions): Promise<EnsureResult> {
   };
 }
 
-export type EnsureIfNeededOptions = EnsureOptions & ResolveEnsureSkipInput;
+export type AcquireIfNeededOptions = AcquireOptions & ResolveAcquireSkipInput;
 
-export type EnsureIfNeededResult =
+export type AcquireIfNeededResult =
   | { status: "skipped"; reason: "disabled" }
   | { status: "skipped"; reason: "external-url"; databaseUrl: string }
-  | ({ status: "ensured" } & EnsureResult);
+  | ({ status: "acquired" } & AcquireResult);
 
 /**
- * Resolve skip policy then ensure. Single entry for hosts (Cedar CLI, Jest, Vitest).
+ * Resolve skip policy then acquire. Single entry for hosts (Cedar CLI, Jest, Vitest).
  * On external-url skip, applies DATABASE_URL / TEST_DATABASE_URL when `setEnv` is not false.
  */
-export async function ensureIfNeeded(
-  options: EnsureIfNeededOptions,
-): Promise<EnsureIfNeededResult> {
+export async function acquireIfNeeded(
+  options: AcquireIfNeededOptions,
+): Promise<AcquireIfNeededResult> {
   const outcome = await runIfNeeded(options, () =>
-    ensure({
+    acquire({
       root: options.root,
       mode: options.mode,
       setEnv: options.setEnv,
     }),
   );
   if (outcome.status === "skipped") return outcome;
-  return { status: "ensured", ...outcome.value };
+  return { status: "acquired", ...outcome.value };
 }
 
 export type DisposeOptions = {

@@ -1,12 +1,12 @@
 import { expect, test, vi } from "vite-plus/test";
-import type { EnsureIfNeededResult } from "../src/core/lifecycle.ts";
+import type { AcquireIfNeededResult } from "../src/core/lifecycle.ts";
 import type { CloneFromTemplateIfNeededResult } from "../src/core/template.ts";
 
-function ensuredLease(
-  overrides: Partial<Extract<EnsureIfNeededResult, { status: "ensured" }>> = {},
-): Extract<EnsureIfNeededResult, { status: "ensured" }> {
+function acquiredLease(
+  overrides: Partial<Extract<AcquireIfNeededResult, { status: "acquired" }>> = {},
+): Extract<AcquireIfNeededResult, { status: "acquired" }> {
   return {
-    status: "ensured",
+    status: "acquired",
     databaseUrl: "postgresql://role:pw@127.0.0.1:5433/cpg_tmpl",
     adminUrl: "postgresql://postgres:postgres@127.0.0.1:5433/postgres",
     databaseName: "cpg_tmpl",
@@ -40,7 +40,7 @@ function clonedWorker(
 
 async function withMockedCore<T>(
   mocks: {
-    ensureIfNeeded?: ReturnType<typeof vi.fn>;
+    acquireIfNeeded?: ReturnType<typeof vi.fn>;
     markTemplate?: ReturnType<typeof vi.fn>;
     cloneFromTemplateIfNeeded?: ReturnType<typeof vi.fn>;
     dispose?: ReturnType<typeof vi.fn>;
@@ -54,7 +54,7 @@ async function withMockedCore<T>(
     );
     return {
       ...actual,
-      ensureIfNeeded: mocks.ensureIfNeeded ?? actual.ensureIfNeeded,
+      acquireIfNeeded: mocks.acquireIfNeeded ?? actual.acquireIfNeeded,
       dispose: mocks.dispose ?? actual.dispose,
     };
   });
@@ -77,18 +77,18 @@ async function withMockedCore<T>(
   }
 }
 
-test("setupTemplateMode ensures, migrates, then markTemplate", async () => {
-  const ensureIfNeeded = vi.fn(async () => ensuredLease());
+test("setupTemplateMode acquires, migrates, then markTemplate", async () => {
+  const acquireIfNeeded = vi.fn(async () => acquiredLease());
   const markTemplate = vi.fn(async () => ({
     databaseName: "cpg_tmpl",
     adminUrl: "postgresql://postgres:postgres@127.0.0.1:5433/postgres",
   }));
   const migrate = vi.fn(async () => {});
 
-  await withMockedCore({ ensureIfNeeded, markTemplate }, async () => {
+  await withMockedCore({ acquireIfNeeded, markTemplate }, async () => {
     const { setupTemplateMode } = await import("../src/adapters/template-mode.ts");
     const result = await setupTemplateMode({ migrate, setEnv: false });
-    expect(result.status).toBe("ensured");
+    expect(result.status).toBe("acquired");
     expect(process.env.CEDAR_PG_ADMIN_URL).toBeUndefined();
     expect(migrate).toHaveBeenCalledWith({
       databaseUrl: "postgresql://role:pw@127.0.0.1:5433/cpg_tmpl",
@@ -105,7 +105,7 @@ test("setupTemplateMode ensures, migrates, then markTemplate", async () => {
 });
 
 test("setupTemplateMode disposes and wraps markTemplate failure after migrate", async () => {
-  const ensureIfNeeded = vi.fn(async () => ensuredLease());
+  const acquireIfNeeded = vi.fn(async () => acquiredLease());
   const markTemplate = vi.fn(async () => {
     throw new Error("permission denied");
   });
@@ -116,10 +116,10 @@ test("setupTemplateMode disposes and wraps markTemplate failure after migrate", 
   }));
   const migrate = vi.fn(async () => {});
 
-  await withMockedCore({ ensureIfNeeded, markTemplate, dispose }, async () => {
+  await withMockedCore({ acquireIfNeeded, markTemplate, dispose }, async () => {
     const { setupTemplateMode } = await import("../src/adapters/template-mode.ts");
     await expect(setupTemplateMode({ migrate })).rejects.toThrow(
-      /template setup failed after ensure; cleaned up lease DB \(cpg_tmpl\).*permission denied/,
+      /template setup failed after acquire; cleaned up lease DB \(cpg_tmpl\).*permission denied/,
     );
     expect(migrate).toHaveBeenCalledTimes(1);
     expect(dispose).toHaveBeenCalledWith({ root: "/tmp/wt", mode: "test" });
@@ -127,7 +127,7 @@ test("setupTemplateMode disposes and wraps markTemplate failure after migrate", 
 });
 
 test("setupTemplateMode disposes when migrate fails before markTemplate", async () => {
-  const ensureIfNeeded = vi.fn(async () => ensuredLease());
+  const acquireIfNeeded = vi.fn(async () => acquiredLease());
   const markTemplate = vi.fn(async () => ({
     databaseName: "cpg_tmpl",
     adminUrl: "postgresql://postgres:postgres@127.0.0.1:5433/postgres",
@@ -141,18 +141,18 @@ test("setupTemplateMode disposes when migrate fails before markTemplate", async 
     throw new Error("migrate boom");
   });
 
-  await withMockedCore({ ensureIfNeeded, markTemplate, dispose }, async () => {
+  await withMockedCore({ acquireIfNeeded, markTemplate, dispose }, async () => {
     const { setupTemplateMode } = await import("../src/adapters/template-mode.ts");
     await expect(setupTemplateMode({ migrate })).rejects.toThrow(
-      /template setup failed after ensure; cleaned up lease DB \(cpg_tmpl\).*migrate boom/,
+      /template setup failed after acquire; cleaned up lease DB \(cpg_tmpl\).*migrate boom/,
     );
     expect(markTemplate).not.toHaveBeenCalled();
     expect(dispose).toHaveBeenCalledWith({ root: "/tmp/wt", mode: "test" });
   });
 });
 
-test("setupTemplateMode skips migrate/mark when ensure is skipped", async () => {
-  const ensureIfNeeded = vi.fn(async () => ({
+test("setupTemplateMode skips migrate/mark when acquire is skipped", async () => {
+  const acquireIfNeeded = vi.fn(async () => ({
     status: "skipped" as const,
     reason: "disabled" as const,
   }));
@@ -162,7 +162,7 @@ test("setupTemplateMode skips migrate/mark when ensure is skipped", async () => 
   }));
   const migrate = vi.fn(async () => {});
 
-  await withMockedCore({ ensureIfNeeded, markTemplate }, async () => {
+  await withMockedCore({ acquireIfNeeded, markTemplate }, async () => {
     const { setupTemplateMode } = await import("../src/adapters/template-mode.ts");
     const result = await setupTemplateMode({ migrate });
     expect(result).toEqual({ status: "skipped", reason: "disabled" });
@@ -171,7 +171,7 @@ test("setupTemplateMode skips migrate/mark when ensure is skipped", async () => 
   });
 });
 
-test("ensureWorkerDatabase clones via cloneFromTemplateIfNeeded with setEnv true", async () => {
+test("cloneWorkerDatabase clones via cloneFromTemplateIfNeeded with setEnv true", async () => {
   const prevJest = process.env.JEST_WORKER_ID;
   const prevCedar = process.env.CEDAR_PG;
   process.env.JEST_WORKER_ID = "3";
@@ -181,8 +181,8 @@ test("ensureWorkerDatabase clones via cloneFromTemplateIfNeeded with setEnv true
 
   try {
     await withMockedCore({ cloneFromTemplateIfNeeded }, async () => {
-      const { ensureWorkerDatabase } = await import("../src/adapters/template-mode.ts");
-      await ensureWorkerDatabase({ root: "/tmp/wt" });
+      const { cloneWorkerDatabase } = await import("../src/adapters/template-mode.ts");
+      await cloneWorkerDatabase({ root: "/tmp/wt" });
       expect(cloneFromTemplateIfNeeded).toHaveBeenCalledWith({
         root: "/tmp/wt",
         mode: "test",
@@ -198,7 +198,7 @@ test("ensureWorkerDatabase clones via cloneFromTemplateIfNeeded with setEnv true
   }
 });
 
-test("ensureWorkerDatabase is idempotent per process", async () => {
+test("cloneWorkerDatabase is idempotent per process", async () => {
   const prevJest = process.env.JEST_WORKER_ID;
   const prevCedar = process.env.CEDAR_PG;
   process.env.JEST_WORKER_ID = "1";
@@ -210,9 +210,9 @@ test("ensureWorkerDatabase is idempotent per process", async () => {
 
   try {
     await withMockedCore({ cloneFromTemplateIfNeeded }, async () => {
-      const { ensureWorkerDatabase } = await import("../src/adapters/template-mode.ts");
-      await ensureWorkerDatabase();
-      await ensureWorkerDatabase();
+      const { cloneWorkerDatabase } = await import("../src/adapters/template-mode.ts");
+      await cloneWorkerDatabase();
+      await cloneWorkerDatabase();
       expect(cloneFromTemplateIfNeeded).toHaveBeenCalledTimes(1);
     });
   } finally {
@@ -223,7 +223,7 @@ test("ensureWorkerDatabase is idempotent per process", async () => {
   }
 });
 
-test("ensureWorkerDatabase rejects conflicting root/name after first call", async () => {
+test("cloneWorkerDatabase rejects conflicting root/name after first call", async () => {
   const prevJest = process.env.JEST_WORKER_ID;
   const prevCedar = process.env.CEDAR_PG;
   process.env.JEST_WORKER_ID = "1";
@@ -235,9 +235,9 @@ test("ensureWorkerDatabase rejects conflicting root/name after first call", asyn
 
   try {
     await withMockedCore({ cloneFromTemplateIfNeeded }, async () => {
-      const { ensureWorkerDatabase } = await import("../src/adapters/template-mode.ts");
-      await ensureWorkerDatabase({ root: "/tmp/a" });
-      expect(() => ensureWorkerDatabase({ root: "/tmp/b" })).toThrow(
+      const { cloneWorkerDatabase } = await import("../src/adapters/template-mode.ts");
+      await cloneWorkerDatabase({ root: "/tmp/a" });
+      expect(() => cloneWorkerDatabase({ root: "/tmp/b" })).toThrow(
         /already started with different root\/name/,
       );
       expect(cloneFromTemplateIfNeeded).toHaveBeenCalledTimes(1);
@@ -250,16 +250,16 @@ test("ensureWorkerDatabase rejects conflicting root/name after first call", asyn
   }
 });
 
-test("vitest template teardown uses EnsureResult.dispose", async () => {
+test("vitest template teardown uses AcquireResult.dispose", async () => {
   const disposeFn = vi.fn(async () => {});
-  const ensureIfNeeded = vi.fn(async () => ensuredLease({ dispose: disposeFn }));
+  const acquireIfNeeded = vi.fn(async () => acquiredLease({ dispose: disposeFn }));
   const markTemplate = vi.fn(async () => ({
     databaseName: "cpg_tmpl",
     adminUrl: "postgresql://postgres:postgres@127.0.0.1:5433/postgres",
   }));
   const migrate = vi.fn(async () => {});
 
-  await withMockedCore({ ensureIfNeeded, markTemplate }, async () => {
+  await withMockedCore({ acquireIfNeeded, markTemplate }, async () => {
     const { createGlobalSetup } = await import("../src/adapters/vitest-template.ts");
     const teardown = await createGlobalSetup({ migrate })();
     await teardown();
@@ -268,14 +268,14 @@ test("vitest template teardown uses EnsureResult.dispose", async () => {
 });
 
 test("jest createGlobalSetup wires migrate hook", async () => {
-  const ensureIfNeeded = vi.fn(async () => ensuredLease());
+  const acquireIfNeeded = vi.fn(async () => acquiredLease());
   const markTemplate = vi.fn(async () => ({
     databaseName: "cpg_tmpl",
     adminUrl: "postgresql://postgres:postgres@127.0.0.1:5433/postgres",
   }));
   const migrate = vi.fn(async () => {});
 
-  await withMockedCore({ ensureIfNeeded, markTemplate }, async () => {
+  await withMockedCore({ acquireIfNeeded, markTemplate }, async () => {
     const { createGlobalSetup } = await import("../src/adapters/jest-template.ts");
     await createGlobalSetup({ migrate })();
     expect(migrate).toHaveBeenCalledTimes(1);
@@ -297,8 +297,8 @@ test("vitest template default export requires createGlobalSetup", async () => {
   vi.resetModules();
 });
 
-test("jest template re-exports ensureWorkerDatabase", async () => {
-  const { ensureWorkerDatabase: fromJest } = await import("../src/adapters/jest-template.ts");
-  const { ensureWorkerDatabase: fromMode } = await import("../src/adapters/template-mode.ts");
+test("jest template re-exports cloneWorkerDatabase", async () => {
+  const { cloneWorkerDatabase: fromJest } = await import("../src/adapters/jest-template.ts");
+  const { cloneWorkerDatabase: fromMode } = await import("../src/adapters/template-mode.ts");
   expect(fromJest).toBe(fromMode);
 });

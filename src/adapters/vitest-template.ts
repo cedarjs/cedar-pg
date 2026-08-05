@@ -1,10 +1,10 @@
 import {
-  ensureWorkerDatabase,
+  cloneWorkerDatabase,
   setupTemplateMode,
   type SetupTemplateModeOptions,
 } from "./template-mode.ts";
 
-export { ensureWorkerDatabase };
+export { cloneWorkerDatabase };
 export type {
   SetupTemplateModeOptions,
   TemplateMigrateFn,
@@ -28,8 +28,8 @@ export type {
  * })
  *
  * // vitest.cedar-worker.ts — local ESM (pack emits CJS+ESM; top-level await lives here)
- * import { ensureWorkerDatabase } from "@cedarjs/pg/vitest/template";
- * await ensureWorkerDatabase();
+ * import { cloneWorkerDatabase } from "@cedarjs/pg/vitest/template";
+ * await cloneWorkerDatabase();
  * ```
  *
  * Stock `@cedarjs/pg/vitest` is one shared test DB only.
@@ -37,7 +37,7 @@ export type {
 export function createGlobalSetup(options: SetupTemplateModeOptions) {
   return async () => {
     const result = await setupTemplateMode(options);
-    if (result.status !== "ensured") {
+    if (result.status !== "acquired") {
       return async () => {};
     }
     return async () => {

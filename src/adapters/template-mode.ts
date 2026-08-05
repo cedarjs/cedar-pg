@@ -1,4 +1,4 @@
-import { dispose, ensureIfNeeded, type EnsureIfNeededResult } from "../core/lifecycle.ts";
+import { dispose, acquireIfNeeded, type AcquireIfNeededResult } from "../core/lifecycle.ts";
 import { cloneFromTemplateIfNeeded, markTemplate } from "../core/template.ts";
 
 export type TemplateMigrateContext = {
@@ -18,21 +18,21 @@ export type SetupTemplateModeOptions = {
 };
 
 /**
- * Runner orchestration: ensure → migrate → markTemplate.
- * After ensure succeeds, migrate + markTemplate are all-or-nothing: any failure
+ * Runner orchestration: acquire → migrate → markTemplate.
+ * After acquire succeeds, migrate + markTemplate are all-or-nothing: any failure
  * best-effort disposes the lease so Vitest (no separate teardown) does not leak.
  * Programmatic apps that do not need a migrate hook should call core
- * `ensure` + `markTemplate` + `cloneFromTemplate` + `dispose` instead.
+ * `acquire` + `markTemplate` + `cloneFromTemplate` + `dispose` instead.
  */
 export async function setupTemplateMode(
   options: SetupTemplateModeOptions,
-): Promise<EnsureIfNeededResult> {
-  const result = await ensureIfNeeded({
+): Promise<AcquireIfNeededResult> {
+  const result = await acquireIfNeeded({
     root: options.root,
     mode: "test",
     setEnv: options.setEnv !== false,
   });
-  if (result.status !== "ensured") return result;
+  if (result.status !== "acquired") return result;
 
   try {
     await options.migrate({
@@ -54,7 +54,7 @@ export async function setupTemplateMode(
     }
     const detail = err instanceof Error ? err.message : String(err);
     throw new Error(
-      `template setup failed after ensure; cleaned up lease DB (${result.databaseName}). ` +
+      `template setup failed after acquire; cleaned up lease DB (${result.databaseName}). ` +
         `Fix the error and re-run: ${detail}`,
       { cause: err },
     );
@@ -63,7 +63,7 @@ export async function setupTemplateMode(
   return result;
 }
 
-export type EnsureWorkerDatabaseOptions = {
+export type CloneWorkerDatabaseOptions = {
   root?: string;
   /** Clone suffix; defaults to JEST_WORKER_ID / VITEST_POOL_ID / pid. */
   name?: string;
@@ -72,7 +72,7 @@ export type EnsureWorkerDatabaseOptions = {
 let workerOnce: Promise<void> | undefined;
 let workerOnceKey: string | undefined;
 
-function resolveWorkerName(options: EnsureWorkerDatabaseOptions): string {
+function resolveWorkerName(options: CloneWorkerDatabaseOptions): string {
   return (
     options.name ?? process.env.JEST_WORKER_ID ?? process.env.VITEST_POOL_ID ?? String(process.pid)
   );
@@ -84,16 +84,16 @@ function workerOptionsKey(root: string | undefined, name: string): string {
 
 /**
  * Process-once per-worker clone (JEST_WORKER_ID / VITEST_POOL_ID / pid by default).
- * Uses `cloneFromTemplateIfNeeded` (same skip policy as `ensureIfNeeded`) with `setEnv: true`.
+ * Uses `cloneFromTemplateIfNeeded` (same skip policy as `acquireIfNeeded`) with `setEnv: true`.
  * First call wins for `root`/`name`; conflicting later calls throw.
  */
-export function ensureWorkerDatabase(options: EnsureWorkerDatabaseOptions = {}): Promise<void> {
+export function cloneWorkerDatabase(options: CloneWorkerDatabaseOptions = {}): Promise<void> {
   const name = resolveWorkerName(options);
   const key = workerOptionsKey(options.root, name);
   if (workerOnce) {
     if (workerOnceKey !== key) {
       throw new Error(
-        `ensureWorkerDatabase already started with different root/name ` +
+        `cloneWorkerDatabase already started with different root/name ` +
           `(first: ${JSON.stringify(workerOnceKey)}, now: ${JSON.stringify(key)})`,
       );
     }

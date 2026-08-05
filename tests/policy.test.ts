@@ -2,7 +2,7 @@ import { expect, test } from "vite-plus/test";
 import {
   isCedarPgManagedUrl,
   isExternalDatabaseEscapeHatch,
-  resolveEnsureSkip,
+  resolveAcquireSkip,
 } from "../src/core/policy.ts";
 
 function withEnv(patch: Record<string, string | undefined>, fn: () => void): void {
@@ -55,19 +55,19 @@ test("isExternalDatabaseEscapeHatch ignores unset template placeholders", () => 
   expect(isExternalDatabaseEscapeHatch("postgresql://real-user@localhost:5432/app")).toBe(true);
 });
 
-test("resolveEnsureSkip honors CEDAR_PG disable from env", () => {
+test("resolveAcquireSkip honors CEDAR_PG disable from env", () => {
   withEnv({ CEDAR_PG: "0", TEST_DATABASE_URL: undefined }, () => {
-    expect(resolveEnsureSkip()).toEqual({ skip: true, reason: "disabled" });
+    expect(resolveAcquireSkip()).toEqual({ skip: true, reason: "disabled" });
   });
 });
 
-test("resolveEnsureSkip accepts explicit disabled: false for opt-in hosts", () => {
+test("resolveAcquireSkip accepts explicit disabled: false for opt-in hosts", () => {
   withEnv({ CEDAR_PG: "0", TEST_DATABASE_URL: undefined }, () => {
-    expect(resolveEnsureSkip({ disabled: false })).toEqual({ skip: false });
+    expect(resolveAcquireSkip({ disabled: false })).toEqual({ skip: false });
   });
 });
 
-test("resolveEnsureSkip honors real external url input", () => {
+test("resolveAcquireSkip honors real external url input", () => {
   withEnv(
     {
       CEDAR_PG: undefined,
@@ -75,7 +75,7 @@ test("resolveEnsureSkip honors real external url input", () => {
       CEDAR_PG_FORCE: undefined,
     },
     () => {
-      expect(resolveEnsureSkip({ url: "postgresql://external/db" })).toEqual({
+      expect(resolveAcquireSkip({ url: "postgresql://external/db" })).toEqual({
         skip: true,
         reason: "external-url",
         databaseUrl: "postgresql://external/db",
@@ -84,24 +84,24 @@ test("resolveEnsureSkip honors real external url input", () => {
   );
 });
 
-test("resolveEnsureSkip does not treat stale cedarpg URL as escape hatch", () => {
+test("resolveAcquireSkip does not treat stale cedarpg URL as escape hatch", () => {
   expect(
-    resolveEnsureSkip({
+    resolveAcquireSkip({
       disabled: false,
       url: "postgresql://cpg_cedar_main_test_abcd1234_role:old@127.0.0.1:25432/cpg_cedar_main_test_abcd1234",
     }),
   ).toEqual({ skip: false });
 });
 
-test("resolveEnsureSkip ignores sqlite file urls", () => {
-  expect(resolveEnsureSkip({ disabled: false, url: "file:./.cedar/test.db" })).toEqual({
+test("resolveAcquireSkip ignores sqlite file urls", () => {
+  expect(resolveAcquireSkip({ disabled: false, url: "file:./.cedar/test.db" })).toEqual({
     skip: false,
   });
 });
 
-test("resolveEnsureSkip force overrides escape hatch", () => {
+test("resolveAcquireSkip force overrides escape hatch", () => {
   expect(
-    resolveEnsureSkip({
+    resolveAcquireSkip({
       disabled: false,
       force: true,
       url: "postgresql://external/db",
@@ -109,9 +109,9 @@ test("resolveEnsureSkip force overrides escape hatch", () => {
   ).toEqual({ skip: false });
 });
 
-test("resolveEnsureSkip does not treat template placeholder URLs as escape hatch", () => {
+test("resolveAcquireSkip does not treat template placeholder URLs as escape hatch", () => {
   expect(
-    resolveEnsureSkip({
+    resolveAcquireSkip({
       disabled: false,
       url: "postgresql://{yourMachine}@localhost:5432/leftlane_app_test",
     }),
