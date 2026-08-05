@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import { buildDatabaseName, buildRoleName } from "../src/core/naming.ts";
+import { buildDatabaseName, buildRoleName, buildCloneDatabaseName } from "../src/core/naming.ts";
 import type { WorktreeIdentity } from "../src/core/worktree.ts";
 
 function id(
@@ -44,4 +44,15 @@ test("buildRoleName stays within 63 chars", () => {
   const role = buildRoleName(db);
   expect(role).toBe(`${db}_role`);
   expect(role.length).toBeLessThanOrEqual(63);
+});
+
+test("buildCloneDatabaseName keeps suffix and stays ≤63", () => {
+  const template = "cpg_cedar_main_test_abcd1234";
+  expect(buildCloneDatabaseName(template, "1")).toBe(`${template}_c_1`);
+  expect(buildCloneDatabaseName(template, "Worker-2!")).toBe(`${template}_c_worker_2`);
+
+  const long = "c".repeat(60);
+  const clone = buildCloneDatabaseName(long, "worker99");
+  expect(clone.length).toBeLessThanOrEqual(63);
+  expect(clone.endsWith("_c_worker99")).toBe(true);
 });

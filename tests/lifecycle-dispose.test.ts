@@ -44,6 +44,9 @@ test("dispose removes mode env after successful DROP", async () => {
   const prev = process.env.CEDAR_PG_REGISTRY_DIR;
   process.env.CEDAR_PG_REGISTRY_DIR = registry;
 
+  const adminUrl = "postgresql://postgres@127.0.0.1:5432/postgres";
+  const databaseName = "cpg_cedar_main_test_disposeenv";
+
   vi.resetModules();
   vi.doMock("../src/providers/host.ts", async () => {
     const actual = await vi.importActual<typeof import("../src/providers/host.ts")>(
@@ -52,7 +55,7 @@ test("dispose removes mode env after successful DROP", async () => {
     return {
       ...actual,
       ensureHostRunning: async () => ({
-        adminUrl: "postgresql://postgres@127.0.0.1:5432/postgres",
+        adminUrl,
         port: 5432,
       }),
     };
@@ -63,6 +66,7 @@ test("dispose removes mode env after successful DROP", async () => {
     );
     return {
       ...actual,
+      listDatabasesOwnedByRole: vi.fn(async () => [databaseName]),
       dropDatabase: vi.fn(async () => {}),
     };
   });
@@ -70,7 +74,7 @@ test("dispose removes mode env after successful DROP", async () => {
   try {
     const lease = makeLease({
       root,
-      databaseName: "cpg_cedar_main_test_disposeenv",
+      databaseName,
     });
     writeLease(lease);
     writeFileSync(envPath(root, "test"), "DATABASE_URL=postgresql://u:p@127.0.0.1:5432/db\n", {
@@ -81,6 +85,7 @@ test("dispose removes mode env after successful DROP", async () => {
     await expect(dispose({ root, mode: "test" })).resolves.toEqual({
       dropped: true,
       databaseName: lease.databaseName,
+      droppedDatabases: [lease.databaseName],
     });
 
     expect(readLease(root, "test")).toBeNull();
@@ -121,6 +126,7 @@ test("dispose leaves lease+registry when host is unavailable", async () => {
     );
     return {
       ...actual,
+      listDatabasesOwnedByRole: vi.fn(),
       dropDatabase: vi.fn(),
     };
   });
@@ -142,6 +148,7 @@ test("dispose leaves lease+registry when host is unavailable", async () => {
 
     expect(readLease(root, "test")).toEqual(lease);
     expect(listRegistryLeases().map((l) => l.databaseName)).toContain(lease.databaseName);
+    expect(autopg.listDatabasesOwnedByRole).not.toHaveBeenCalled();
     expect(autopg.dropDatabase).not.toHaveBeenCalled();
   } finally {
     vi.doUnmock("../src/providers/host.ts");

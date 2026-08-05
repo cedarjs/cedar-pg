@@ -186,7 +186,7 @@ Use exported `STATE_DIRNAME` (`.cedarpg`) / `loadTestEnv(root?)` instead of hard
 ```ts
 import { ensure, dispose, loadTestEnv, STATE_DIRNAME } from "@cedarjs/pg";
 
-const { databaseUrl, databaseName, dispose: drop } = await ensure({ mode: "test" });
+const { databaseUrl, adminUrl, databaseName, dispose: drop } = await ensure({ mode: "test" });
 // … tests …
 await drop();
 ```
@@ -237,6 +237,25 @@ See [`.github/actions/setup-autopg`](.github/actions/setup-autopg/README.md) for
 
 The action runs `scripts/ci-install-autopg.sh` under the hood. For published-package consumers under `CI=true` without the Action, set `CEDAR_PG_INSTALL_AUTOPG=1` so `postinstall` runs that same script (not upstream `install.sh`) — that flag alone is not enough when the package manager disables lifecycle scripts (`--ignore-scripts`, `YARN_ENABLE_SCRIPTS=false`, etc.). Prefer this Action, or bake the binary into the image.
 
+### Migrate-once + TEMPLATE clones (Jest workers)
+
+```ts
+import { ensure, markTemplate, cloneFromTemplate, dispose } from "@cedarjs/pg";
+
+const ensured = await ensure({ mode: "test" });
+// run migrations once against ensured.databaseUrl (Prisma migrate reset, etc.)
+await markTemplate(ensured);
+
+const worker = await cloneFromTemplate({ name: process.env.JEST_WORKER_ID ?? "1" });
+// worker.databaseUrl — same role credentials; adminUrl for privileged DDL if needed
+
+await dispose({ mode: "test" }); // drops TEMPLATE + all clones owned by the test role
+```
+
+`ensure` returns `adminUrl` so apps do not re-derive `postgresql://postgres:postgres@127.0.0.1:<port>/postgres`.
+`cloneFromTemplate` uses the admin connection internally (`CREATE DATABASE … TEMPLATE`); test roles stay `LOGIN`-only.
+`dispose` unsets `IS_TEMPLATE` and drops every DB owned by the test role (template + clones).
+
 ## Env
 
 | Var                            | Meaning                                                                                                       |
@@ -259,3 +278,4 @@ The action runs `scripts/ci-install-autopg.sh` under the hood. For published-pac
   (ephemeral cold-start when the runner has no live host; attach-wins otherwise).
 - State lives in product-owned `.cedarpg` (worktree + `~/.cedarpg/registry`), not under autopg's `~/.autopg/` or a generic `.pg`.
 - Role passwords are derived from `roleName` (`cedar-pg\\0` + roleName, scheme v2) so TEMPLATE clones that reuse a role keep working; bump the scheme id to change the derivation.
+- Test TEMPLATE flow: `ensure` returns `adminUrl`; `markTemplate` / `cloneFromTemplate` / `dispose` own migrate-once worker isolation (dispose drops role-owned DBs).

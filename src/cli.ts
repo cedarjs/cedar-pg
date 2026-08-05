@@ -86,6 +86,7 @@ async function main(): Promise<number> {
           `${JSON.stringify(
             {
               databaseUrl: result.databaseUrl,
+              adminUrl: result.adminUrl,
               databaseName: result.databaseName,
               roleName: result.roleName,
               repoSlug: result.repoSlug,

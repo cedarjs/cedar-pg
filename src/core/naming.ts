@@ -57,3 +57,20 @@ export function buildRoleName(databaseName: string): string {
   const base = databaseName.slice(0, maxBase);
   return `${base}${suffix}`;
 }
+
+/**
+ * Build a worker clone datname from a TEMPLATE database name.
+ * Layout: `<template>_c_<suffix>` truncated to ≤63 chars (keeps suffix).
+ */
+export function buildCloneDatabaseName(templateName: string, suffix: string): string {
+  const safe = suffix
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 24);
+  const tag = safe.length > 0 ? safe : "w";
+  const sep = "_c_";
+  const maxTemplate = PG_MAX - sep.length - tag.length;
+  const base = templateName.slice(0, Math.max(1, maxTemplate));
+  return `${base}${sep}${tag}`.slice(0, PG_MAX);
+}
