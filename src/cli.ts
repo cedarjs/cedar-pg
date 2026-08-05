@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
 import { CLI_NAME } from "./core/constants.ts";
 import { ensure, dispose, gc, urlFromLease } from "./core/lifecycle.ts";
 import { resolveWorktreeIdentity } from "./core/worktree.ts";
@@ -9,7 +10,8 @@ function printHelp(): void {
   process.stdout.write(`${CLI_NAME}: worktree-isolated local Postgres (via autopg)
 
 Usage:
-  ${CLI_NAME} ensure --mode=dev|test [--root <path>] [--json] [--print-env]
+  ${CLI_NAME} ensure --mode=dev|test [--root <path>] [--force] [--json] [--print-env]
+  ${CLI_NAME} run --mode=dev|test [--root <path>] [--force] -- <cmd…>
   ${CLI_NAME} dispose [--mode=dev|test] [--root <path>]
   ${CLI_NAME} gc [--json]
   ${CLI_NAME} print-url [--mode=dev|test] [--root <path>]
@@ -19,9 +21,14 @@ Modes:
   dev   Keep DB across restarts (default for ensure if omitted: dev)
   test  Drop DB on dispose / test teardown
 
+run:
+  Ensure, set DATABASE_URL (+ TEST_DATABASE_URL in test) on the child, exec <cmd…>.
+  --force sets CEDAR_PG_FORCE (escape hatch); child env overwrite is always on.
+
 Env:
-  AUTOPG_BIN     Path to autopg binary
-  CEDAR_PG=0     Disable adapters that auto-ensure
+  AUTOPG_BIN       Path to autopg binary
+  CEDAR_PG=0       Disable adapters that auto-ensure
+  CEDAR_PG_FORCE=1 Ignore external-URL escape hatch (same as --force)
 `);
 }
 
@@ -30,29 +37,58 @@ function parseMode(value: string | undefined): DbMode {
   throw new Error("--mode must be dev or test");
 }
 
-function parseArgs(argv: string[]) {
-  const out: {
-    cmd?: string;
-    mode?: DbMode;
-    root?: string;
-    json?: boolean;
-    printEnv?: boolean;
-    help?: boolean;
-  } = {};
+type ParsedArgs = {
+  cmd?: string;
+  mode?: DbMode;
+  root?: string;
+  json?: boolean;
+  printEnv?: boolean;
+  force?: boolean;
+  help?: boolean;
+  child?: string[];
+};
+
+function parseArgs(argv: string[]): ParsedArgs {
+  const out: ParsedArgs = {};
   const rest = [...argv];
   out.cmd = rest.shift();
-  for (let i = 0; i < rest.length; i++) {
-    const a = rest[i]!;
+
+  const dash = rest.indexOf("--");
+  let flagArgs = rest;
+  if (dash >= 0) {
+    flagArgs = rest.slice(0, dash);
+    out.child = rest.slice(dash + 1);
+  }
+
+  for (let i = 0; i < flagArgs.length; i++) {
+    const a = flagArgs[i]!;
     if (a === "--help" || a === "-h") out.help = true;
     else if (a === "--json") out.json = true;
     else if (a === "--print-env") out.printEnv = true;
+    else if (a === "--force") out.force = true;
     else if (a.startsWith("--mode=")) out.mode = parseMode(a.slice(7));
-    else if (a === "--mode") out.mode = parseMode(rest[++i]);
+    else if (a === "--mode") out.mode = parseMode(flagArgs[++i]);
     else if (a.startsWith("--root=")) out.root = a.slice(7);
-    else if (a === "--root") out.root = rest[++i];
+    else if (a === "--root") out.root = flagArgs[++i];
     else throw new Error(`unknown argument: ${a}`);
   }
   return out;
+}
+
+function runChild(command: string[], env: NodeJS.ProcessEnv): Promise<number> {
+  const [file, ...args] = command;
+  if (!file) {
+    throw new Error(
+      `run requires a command after -- (e.g. ${CLI_NAME} run --mode=dev -- yarn dev)`,
+    );
+  }
+  return new Promise((resolve, reject) => {
+    const child = spawn(file, args, { stdio: "inherit", env });
+    child.on("error", reject);
+    child.on("exit", (code, signal) => {
+      resolve(signal ? 1 : (code ?? 1));
+    });
+  });
 }
 
 async function main(): Promise<number> {
@@ -69,6 +105,7 @@ async function main(): Promise<number> {
 
   try {
     if (args.cmd === "ensure") {
+      if (args.force) process.env.CEDAR_PG_FORCE = "1";
       const mode = args.mode ?? "dev";
       const result = await ensure({
         root: args.root,
@@ -107,6 +144,22 @@ async function main(): Promise<number> {
         process.stdout.write(`${result.databaseUrl}\n`);
       }
       return 0;
+    }
+
+    if (args.cmd === "run") {
+      if (args.force) process.env.CEDAR_PG_FORCE = "1";
+      const mode = args.mode ?? "dev";
+      const result = await ensure({
+        root: args.root,
+        mode,
+        setEnv: true,
+      });
+      const childEnv: NodeJS.ProcessEnv = {
+        ...process.env,
+        DATABASE_URL: result.databaseUrl,
+      };
+      if (mode === "test") childEnv.TEST_DATABASE_URL = result.databaseUrl;
+      return await runChild(args.child ?? [], childEnv);
     }
 
     if (args.cmd === "dispose") {

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- CLI: `cedarpg run --mode=dev|test -- <cmd…>` ensures then overwrites child `DATABASE_URL` (Nx/e2e/dev)
+- CLI: `ensure --force` / `run --force` sets `CEDAR_PG_FORCE=1` (escape hatch only; `run` always injects child env)
+- Shared `cedarPgLifecycleTargets` for Vite+ / Nx; Nx adds `cedarPgRunCommand` + `relativeEnvFile`
+- `createEnsureTask({ afterEnsure })` on `@cedarjs/pg` (db:ready compose; not Nx-specific)
+- `loadDevEnv({ overwrite })` + `@cedarjs/pg/dev-env`; `loadTestEnv` accepts `{ overwrite: true }`
+- Public: `envFilePath(root, mode)` for stable `.cedarpg/<mode>.env` paths
+
 ## 0.1.0-alpha.0
 
 Initial alpha of **cedar-pg**, published on npm as `@cedarjs/pg` (CLI: `cedarpg`).

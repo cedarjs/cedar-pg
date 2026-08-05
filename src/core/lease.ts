@@ -11,6 +11,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { STATE_DIRNAME } from "./constants.ts";
 import type { DbMode } from "./naming.ts";
+import { resolveRoot } from "./worktree.ts";
 
 export type Lease = {
   schemaVersion: 1;
@@ -74,6 +75,11 @@ export function leasePath(root: string, mode: DbMode): string {
 
 export function envPath(root: string, mode: DbMode): string {
   return join(leaseDir(root), `${mode}.env`);
+}
+
+/** Absolute `.cedarpg/<mode>.env` path (resolves root when omitted). */
+export function envFilePath(root: string | undefined, mode: DbMode): string {
+  return envPath(resolveRoot(root), mode);
 }
 
 /** Best-effort delete worktree lease JSON + mode env (missing is fine). */
