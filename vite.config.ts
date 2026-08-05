@@ -11,10 +11,13 @@ export default defineConfig({
       "vite-plus": "src/adapters/vite-plus.ts",
       nx: "src/adapters/nx.ts",
       vitest: "src/adapters/vitest.ts",
+      "vitest-template": "src/adapters/vitest-template.ts",
       jest: "src/adapters/jest.ts",
       "jest-teardown": "src/adapters/jest-teardown.ts",
       "test-env": "src/adapters/test-env.ts",
+      "jest-template": "src/adapters/jest-template.ts",
     },
+
     dts: true,
     format: ["esm", "cjs"],
     sourcemap: true,

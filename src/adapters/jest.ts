@@ -1,7 +1,9 @@
 import { ensureIfNeeded } from "../core/lifecycle.ts";
 
 /**
- * Jest globalSetup. Call from jest config:
+ * Jest globalSetup for a single shared test DB (`ensureIfNeeded` + dispose).
+ * Not a migrate-once / per-worker TEMPLATE runner — use `@cedarjs/pg/jest/template`.
+ *
  * ```js
  * globalSetup: require.resolve('@cedarjs/pg/jest'),
  * globalTeardown: require.resolve('@cedarjs/pg/jest-teardown'),

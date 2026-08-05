@@ -35,7 +35,10 @@ run(
     `
 import {
   buildDatabaseName,
+  cloneFromTemplate,
+  cloneFromTemplateIfNeeded,
   loadTestEnv,
+  markTemplate,
   STATE_DIRNAME,
 } from '${PACKAGE_NAME}';
 import { cedarPgTasks } from '${PACKAGE_NAME}/vite-plus';
@@ -43,6 +46,14 @@ import vitestSetup from '${PACKAGE_NAME}/vitest';
 import jestSetup from '${PACKAGE_NAME}/jest';
 import jestTeardown from '${PACKAGE_NAME}/jest-teardown';
 import '${PACKAGE_NAME}/test-env';
+import {
+  createGlobalSetup as createJestTemplateSetup,
+  ensureWorkerDatabase,
+} from '${PACKAGE_NAME}/jest/template';
+import {
+  createGlobalSetup as createVitestTemplateSetup,
+  ensureWorkerDatabase as ensureVitestWorkerDatabase,
+} from '${PACKAGE_NAME}/vitest/template';
 const name = buildDatabaseName(
   { root: '/tmp/x', repoSlug: 'cedar', worktreeSlug: 'feat', pathHash: 'abcd1234' },
   'dev',
@@ -55,6 +66,13 @@ if (typeof jestSetup !== 'function') throw new Error('jest setup export missing'
 if (typeof jestTeardown !== 'function') throw new Error('jest-teardown export missing');
 if (typeof loadTestEnv !== 'function') throw new Error('loadTestEnv export missing');
 if (STATE_DIRNAME !== '.cedarpg') throw new Error('bad STATE_DIRNAME ' + STATE_DIRNAME);
+if (typeof markTemplate !== 'function') throw new Error('missing markTemplate');
+if (typeof cloneFromTemplate !== 'function') throw new Error('missing cloneFromTemplate');
+if (typeof cloneFromTemplateIfNeeded !== 'function') throw new Error('missing cloneFromTemplateIfNeeded');
+if (typeof createJestTemplateSetup !== 'function') throw new Error('missing jest/template createGlobalSetup');
+if (typeof ensureWorkerDatabase !== 'function') throw new Error('missing jest/template ensureWorkerDatabase');
+if (typeof createVitestTemplateSetup !== 'function') throw new Error('missing vitest/template createGlobalSetup');
+if (typeof ensureVitestWorkerDatabase !== 'function') throw new Error('missing vitest/template ensureWorkerDatabase');
 console.log('ok', name, STATE_DIRNAME, Object.keys(tasks).join(','));
 `,
   ],

@@ -1,7 +1,8 @@
 import { ensureIfNeeded } from "../core/lifecycle.ts";
 
 /**
- * Vitest globalSetup: ensure test DB, return teardown that disposes it.
+ * Vitest globalSetup for a single shared test DB.
+ * Not a migrate-once / per-worker TEMPLATE runner — use `@cedarjs/pg/vitest/template`.
  *
  * Vitest runs globalSetup in the main process then spawns workers, so
  * `process.env` mutations (via `setEnv`) are inherited. Pair with

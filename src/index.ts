@@ -1,23 +1,21 @@
-export {
-  ensure,
-  ensureIfNeeded,
-  markTemplate,
-  cloneFromTemplate,
-  dispose,
-  gc,
-  urlFromLease,
-} from "./core/lifecycle.ts";
+export { ensure, ensureIfNeeded, dispose, gc, urlFromLease } from "./core/lifecycle.ts";
 export type {
   EnsureOptions,
   EnsureResult,
   EnsureIfNeededOptions,
   EnsureIfNeededResult,
-  MarkTemplateOptions,
-  CloneFromTemplateOptions,
-  CloneResult,
   DisposeOptions,
   DisposeResult,
 } from "./core/lifecycle.ts";
+
+export { markTemplate, cloneFromTemplate, cloneFromTemplateIfNeeded } from "./core/template.ts";
+export type {
+  MarkTemplateOptions,
+  CloneFromTemplateOptions,
+  CloneFromTemplateIfNeededOptions,
+  CloneFromTemplateIfNeededResult,
+  CloneResult,
+} from "./core/template.ts";
 
 export { resolveWorktreeIdentity, resolveRoot } from "./core/worktree.ts";
 export type { WorktreeIdentity } from "./core/worktree.ts";
@@ -37,6 +35,7 @@ export type { Lease } from "./core/lease.ts";
 
 export {
   resolveEnsureSkip,
+  applyDatabaseUrlEnv,
   isCedarPgManagedUrl,
   isExternalDatabaseEscapeHatch,
 } from "./core/policy.ts";

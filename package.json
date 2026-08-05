@@ -58,6 +58,11 @@
       "import": "./dist/vitest.mjs",
       "require": "./dist/vitest.cjs"
     },
+    "./vitest/template": {
+      "types": "./dist/vitest-template.d.mts",
+      "import": "./dist/vitest-template.mjs",
+      "require": "./dist/vitest-template.cjs"
+    },
     "./jest": {
       "types": "./dist/jest.d.mts",
       "import": "./dist/jest.mjs",
@@ -72,6 +77,11 @@
       "types": "./dist/test-env.d.mts",
       "import": "./dist/test-env.mjs",
       "require": "./dist/test-env.cjs"
+    },
+    "./jest/template": {
+      "types": "./dist/jest-template.d.mts",
+      "import": "./dist/jest-template.mjs",
+      "require": "./dist/jest-template.cjs"
     },
     "./package.json": "./package.json"
   },
