@@ -1,9 +1,9 @@
-export { ensure, ensureIfNeeded, dispose, gc, urlFromLease } from "./core/lifecycle.ts";
+export { acquire, acquireIfNeeded, dispose, gc, urlFromLease } from "./core/lifecycle.ts";
 export type {
-  EnsureOptions,
-  EnsureResult,
-  EnsureIfNeededOptions,
-  EnsureIfNeededResult,
+  AcquireOptions,
+  AcquireResult,
+  AcquireIfNeededOptions,
+  AcquireIfNeededResult,
   DisposeOptions,
   DisposeResult,
 } from "./core/lifecycle.ts";
@@ -34,20 +34,20 @@ export type { LoadTestEnvOptions } from "./adapters/load-test-env.ts";
 export { loadDevEnv } from "./adapters/load-dev-env.ts";
 export type { LoadDevEnvOptions } from "./adapters/load-dev-env.ts";
 
-export { createEnsureTask } from "./adapters/ensure-task.ts";
-export type { CreateEnsureTaskOptions, EnsureTaskContext } from "./adapters/ensure-task.ts";
+export { createAcquireTask } from "./adapters/acquire-task.ts";
+export type { CreateAcquireTaskOptions, AcquireTaskContext } from "./adapters/acquire-task.ts";
 
 /** Read-only lease inspection (mutate/forget APIs are internal; drop-then-forget only). */
 export { parseLease, readLease, isOrphanLease, envFilePath } from "./core/lease.ts";
 export type { Lease } from "./core/lease.ts";
 
 export {
-  resolveEnsureSkip,
+  resolveAcquireSkip,
   applyDatabaseUrlEnv,
   isCedarPgManagedUrl,
   isExternalDatabaseEscapeHatch,
 } from "./core/policy.ts";
-export type { EnsureSkip, ResolveEnsureSkipInput } from "./core/policy.ts";
+export type { AcquireSkip, ResolveAcquireSkipInput } from "./core/policy.ts";
 
 export {
   resolveAutopgBin,
@@ -59,5 +59,4 @@ export {
   ROLE_PASSWORD_SCHEME,
   INSTALL_HINT,
 } from "./providers/autopg.ts";
-export { ensureHostRunning } from "./providers/host.ts";
 export type { AutopgDiscovery } from "./providers/autopg.ts";

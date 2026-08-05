@@ -1,5 +1,5 @@
 /**
- * Nx targets. `dependsOn` does not forward ensure env (unlike Vite+ `env: [...]`);
+ * Nx targets. `dependsOn` does not forward acquire env (unlike Vite+ `env: [...]`);
  * wrap children with `cedarpg run`, or set `envFile` to `.cedarpg/<mode>.env`.
  *
  * ```json
@@ -8,9 +8,9 @@
  *     "dev": {
  *       "command": "cedarpg run --mode=dev -- yarn tsx scripts/apiServer/dev.ts"
  *     },
- *     "db:ensure": { "command": "cedarpg ensure --mode=dev" },
+ *     "db:acquire": { "command": "cedarpg acquire --mode=dev" },
  *     "serve": {
- *       "dependsOn": ["db:ensure"],
+ *       "dependsOn": ["db:acquire"],
  *       "command": "node dist/server.js",
  *       "options": { "envFile": ".cedarpg/dev.env" }
  *     }
@@ -28,13 +28,13 @@ import {
   type CedarPgLifecycleTarget,
   type CedarPgLifecycleTargetsOptions,
   CEDAR_PG_TASK_DISPOSE_TEST,
-  CEDAR_PG_TASK_ENSURE_DEV,
-  CEDAR_PG_TASK_ENSURE_TEST,
+  CEDAR_PG_TASK_ACQUIRE_DEV,
+  CEDAR_PG_TASK_ACQUIRE_TEST,
 } from "./tasks.ts";
 
 export {
-  CEDAR_PG_TASK_ENSURE_DEV as CEDAR_PG_NX_ENSURE_DEV,
-  CEDAR_PG_TASK_ENSURE_TEST as CEDAR_PG_NX_ENSURE_TEST,
+  CEDAR_PG_TASK_ACQUIRE_DEV as CEDAR_PG_NX_ACQUIRE_DEV,
+  CEDAR_PG_TASK_ACQUIRE_TEST as CEDAR_PG_NX_ACQUIRE_TEST,
   CEDAR_PG_TASK_DISPOSE_TEST as CEDAR_PG_NX_DISPOSE_TEST,
   cedarPgLifecycleTargets as cedarPgNxTargets,
   cedarPgRunCommand,

@@ -1,10 +1,10 @@
 import {
-  ensureWorkerDatabase,
+  cloneWorkerDatabase,
   setupTemplateMode,
   type SetupTemplateModeOptions,
 } from "./template-mode.ts";
 
-export { ensureWorkerDatabase };
+export { cloneWorkerDatabase };
 export type {
   SetupTemplateModeOptions,
   TemplateMigrateFn,
@@ -25,8 +25,8 @@ export type {
  * setupFilesAfterEnv: ["<rootDir>/jest.cedar-worker.cjs"],
  *
  * // jest.cedar-worker.cjs
- * const { ensureWorkerDatabase } = require("@cedarjs/pg/jest/template");
- * beforeAll(() => ensureWorkerDatabase());
+ * const { cloneWorkerDatabase } = require("@cedarjs/pg/jest/template");
+ * beforeAll(() => cloneWorkerDatabase());
  * ```
  *
  * Stock `@cedarjs/pg/jest` is one shared test DB only.

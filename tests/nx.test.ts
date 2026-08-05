@@ -2,24 +2,24 @@ import { expect, test } from "vite-plus/test";
 import {
   cedarPgNxTargets,
   cedarPgRunCommand,
-  CEDAR_PG_NX_ENSURE_DEV,
-  CEDAR_PG_NX_ENSURE_TEST,
+  CEDAR_PG_NX_ACQUIRE_DEV,
+  CEDAR_PG_NX_ACQUIRE_TEST,
   envFilePath,
   nxTargetHints,
   relativeEnvFile,
 } from "../src/adapters/nx.ts";
 import { STATE_DIRNAME } from "../src/core/constants.ts";
 
-test("cedarPgNxTargets exposes ensure/dispose commands", () => {
+test("cedarPgNxTargets exposes acquire/dispose commands", () => {
   const targets = cedarPgNxTargets();
-  expect(targets[CEDAR_PG_NX_ENSURE_DEV]?.command).toContain("ensure --mode=dev");
-  expect(targets[CEDAR_PG_NX_ENSURE_TEST]?.command).toContain("ensure --mode=test");
-  expect(targets[CEDAR_PG_NX_ENSURE_DEV]?.cache).toBe(false);
+  expect(targets[CEDAR_PG_NX_ACQUIRE_DEV]?.command).toContain("acquire --mode=dev");
+  expect(targets[CEDAR_PG_NX_ACQUIRE_TEST]?.command).toContain("acquire --mode=test");
+  expect(targets[CEDAR_PG_NX_ACQUIRE_DEV]?.cache).toBe(false);
 });
 
 test("nxTargetHints stays compatible with cedarPgNxTargets commands", () => {
   const hints = nxTargetHints("./bin/cedarpg");
-  expect(hints["db:ensure"]?.command).toBe("./bin/cedarpg ensure --mode=dev");
+  expect(hints["db:acquire"]?.command).toBe("./bin/cedarpg acquire --mode=dev");
 });
 
 test("cedarPgRunCommand wraps child with cedarpg run", () => {

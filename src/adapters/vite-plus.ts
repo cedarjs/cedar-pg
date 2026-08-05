@@ -2,7 +2,7 @@
  * Consumer adapter for external Vite+ projects.
  *
  * Merge into `vite.config.ts` `run.tasks` so `vp run test` / `vp run dev`
- * depend on cedarpg ensure.
+ * depend on cedarpg acquire.
  *
  * @example
  * ```ts
@@ -15,12 +15,12 @@
  *       ...cedarPgTasks(),
  *       test: {
  *         command: 'vp test',
- *         dependsOn: ['db:ensure-test'],
+ *         dependsOn: ['db:acquire-test'],
  *         env: ['DATABASE_URL', 'TEST_DATABASE_URL'],
  *       },
  *       dev: {
  *         command: 'vp dev',
- *         dependsOn: ['db:ensure'],
+ *         dependsOn: ['db:acquire'],
  *         env: ['DATABASE_URL'],
  *       },
  *     },
@@ -34,13 +34,13 @@ import {
   type CedarPgLifecycleTarget,
   type CedarPgLifecycleTargetsOptions,
   CEDAR_PG_TASK_DISPOSE_TEST,
-  CEDAR_PG_TASK_ENSURE_DEV,
-  CEDAR_PG_TASK_ENSURE_TEST,
+  CEDAR_PG_TASK_ACQUIRE_DEV,
+  CEDAR_PG_TASK_ACQUIRE_TEST,
 } from "./tasks.ts";
 
 export {
-  CEDAR_PG_TASK_ENSURE_DEV,
-  CEDAR_PG_TASK_ENSURE_TEST,
+  CEDAR_PG_TASK_ACQUIRE_DEV,
+  CEDAR_PG_TASK_ACQUIRE_TEST,
   CEDAR_PG_TASK_DISPOSE_TEST,
   cedarPgLifecycleTargets as cedarPgTasks,
 };

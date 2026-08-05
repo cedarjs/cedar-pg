@@ -1,7 +1,7 @@
-import { ensureIfNeeded } from "../core/lifecycle.ts";
+import { acquireIfNeeded } from "../core/lifecycle.ts";
 
 /**
- * Jest globalSetup for a single shared test DB (`ensureIfNeeded` + dispose).
+ * Jest globalSetup for a single shared test DB (`acquireIfNeeded` + dispose).
  * Not a migrate-once / per-worker TEMPLATE runner — use `@cedarjs/pg/jest/template`.
  *
  * ```js
@@ -14,7 +14,7 @@ import { ensureIfNeeded } from "../core/lifecycle.ts";
  * `DATABASE_URL` reaches workers via `.cedarpg/test.env`.
  */
 export default async function globalSetup(): Promise<void> {
-  await ensureIfNeeded({
+  await acquireIfNeeded({
     mode: "test",
     setEnv: true,
   });

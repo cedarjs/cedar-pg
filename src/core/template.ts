@@ -1,6 +1,6 @@
 import { buildCloneDatabaseName, type DbMode } from "./naming.ts";
 import { readLease } from "./lease.ts";
-import { applyDatabaseUrlEnv, runIfNeeded, type ResolveEnsureSkipInput } from "./policy.ts";
+import { applyDatabaseUrlEnv, runIfNeeded, type ResolveAcquireSkipInput } from "./policy.ts";
 import { resolveWorktreeIdentity } from "./worktree.ts";
 import {
   buildDatabaseUrl,
@@ -17,13 +17,13 @@ async function resolveAdminUrl(adminUrl?: string): Promise<string> {
 export type MarkTemplateOptions = {
   root?: string;
   mode: DbMode;
-  /** Superuser URL from `ensure`; when omitted, discovers/starts the host. */
+  /** Superuser URL from `acquire`; when omitted, discovers/starts the host. */
   adminUrl?: string;
 };
 
 /**
  * After migrations, mark the leased DB as a PostgreSQL TEMPLATE so workers can clone it.
- * Requires a lease from `ensure` (no datname override).
+ * Requires a lease from `acquire` (no datname override).
  */
 export async function markTemplate(
   options: MarkTemplateOptions,
@@ -32,7 +32,7 @@ export async function markTemplate(
   const mode = options.mode;
   const lease = readLease(identity.root, mode);
   if (!lease) {
-    throw new Error(`no ${mode} lease; run ensure before markTemplate`);
+    throw new Error(`no ${mode} lease; run acquire before markTemplate`);
   }
   const adminUrl = await resolveAdminUrl(options.adminUrl);
   await setDatabaseIsTemplate({
@@ -46,7 +46,7 @@ export async function markTemplate(
 export type CloneFromTemplateOptions = {
   root?: string;
   mode: DbMode;
-  /** Superuser URL from `ensure`; when omitted, discovers/starts the host. */
+  /** Superuser URL from `acquire`; when omitted, discovers/starts the host. */
   adminUrl?: string;
   /**
    * Suffix for the clone datname (e.g. Jest worker id).
@@ -85,7 +85,7 @@ export async function cloneFromTemplate(options: CloneFromTemplateOptions): Prom
   const mode = options.mode;
   const lease = readLease(identity.root, mode);
   if (!lease) {
-    throw new Error(`no ${mode} lease; run ensure + markTemplate before cloneFromTemplate`);
+    throw new Error(`no ${mode} lease; run acquire + markTemplate before cloneFromTemplate`);
   }
 
   const adminUrl = await resolveAdminUrl(options.adminUrl);
@@ -124,7 +124,7 @@ export async function cloneFromTemplate(options: CloneFromTemplateOptions): Prom
   };
 }
 
-export type CloneFromTemplateIfNeededOptions = CloneFromTemplateOptions & ResolveEnsureSkipInput;
+export type CloneFromTemplateIfNeededOptions = CloneFromTemplateOptions & ResolveAcquireSkipInput;
 
 export type CloneFromTemplateIfNeededResult =
   | { status: "skipped"; reason: "disabled" }
@@ -133,7 +133,7 @@ export type CloneFromTemplateIfNeededResult =
 
 /**
  * Resolve skip policy then clone. Host entry for worker adapters (same skip
- * semantics as `ensureIfNeeded`). Defaults `setEnv` on for skip and clone paths.
+ * semantics as `acquireIfNeeded`). Defaults `setEnv` on for skip and clone paths.
  */
 export async function cloneFromTemplateIfNeeded(
   options: CloneFromTemplateIfNeededOptions,

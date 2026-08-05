@@ -37,7 +37,7 @@ import {
   buildDatabaseName,
   cloneFromTemplate,
   cloneFromTemplateIfNeeded,
-  createEnsureTask,
+  createAcquireTask,
   envFilePath,
   loadDevEnv,
   loadTestEnv,
@@ -53,11 +53,11 @@ import '${PACKAGE_NAME}/test-env';
 import '${PACKAGE_NAME}/dev-env';
 import {
   createGlobalSetup as createJestTemplateSetup,
-  ensureWorkerDatabase,
+  cloneWorkerDatabase,
 } from '${PACKAGE_NAME}/jest/template';
 import {
   createGlobalSetup as createVitestTemplateSetup,
-  ensureWorkerDatabase as ensureVitestWorkerDatabase,
+  cloneWorkerDatabase as cloneVitestWorkerDatabase,
 } from '${PACKAGE_NAME}/vitest/template';
 const name = buildDatabaseName(
   { root: '/tmp/x', repoSlug: 'cedar', worktreeSlug: 'feat', pathHash: 'abcd1234' },
@@ -65,9 +65,9 @@ const name = buildDatabaseName(
 );
 if (name !== 'cpg_cedar_feat_dev_abcd1234') throw new Error('bad name ' + name);
 const tasks = cedarPgTasks();
-if (!tasks['db:ensure']) throw new Error('missing db:ensure');
+if (!tasks['db:acquire']) throw new Error('missing db:acquire');
 const nxTargets = cedarPgNxTargets();
-if (!nxTargets['db:ensure']) throw new Error('missing nx db:ensure');
+if (!nxTargets['db:acquire']) throw new Error('missing nx db:acquire');
 if (JSON.stringify(tasks) !== JSON.stringify(nxTargets)) {
   throw new Error('vite-plus and nx lifecycle targets drifted');
 }
@@ -75,7 +75,7 @@ if (!cedarPgRunCommand('dev', 'echo ok').includes('run --mode=dev')) {
   throw new Error('cedarPgRunCommand missing run');
 }
 if (relativeEnvFile('dev') !== '.cedarpg/dev.env') throw new Error('bad relativeEnvFile');
-if (typeof createEnsureTask !== 'function') throw new Error('missing createEnsureTask');
+if (typeof createAcquireTask !== 'function') throw new Error('missing createAcquireTask');
 if (typeof vitestSetup !== 'function') throw new Error('vitest setup export missing');
 if (typeof jestSetup !== 'function') throw new Error('jest setup export missing');
 if (typeof jestTeardown !== 'function') throw new Error('jest-teardown export missing');
@@ -87,9 +87,9 @@ if (typeof markTemplate !== 'function') throw new Error('missing markTemplate');
 if (typeof cloneFromTemplate !== 'function') throw new Error('missing cloneFromTemplate');
 if (typeof cloneFromTemplateIfNeeded !== 'function') throw new Error('missing cloneFromTemplateIfNeeded');
 if (typeof createJestTemplateSetup !== 'function') throw new Error('missing jest/template createGlobalSetup');
-if (typeof ensureWorkerDatabase !== 'function') throw new Error('missing jest/template ensureWorkerDatabase');
+if (typeof cloneWorkerDatabase !== 'function') throw new Error('missing jest/template cloneWorkerDatabase');
 if (typeof createVitestTemplateSetup !== 'function') throw new Error('missing vitest/template createGlobalSetup');
-if (typeof ensureVitestWorkerDatabase !== 'function') throw new Error('missing vitest/template ensureWorkerDatabase');
+if (typeof cloneVitestWorkerDatabase !== 'function') throw new Error('missing vitest/template cloneWorkerDatabase');
 console.log('ok', name, STATE_DIRNAME, Object.keys(tasks).join(','));
 `,
   ],
@@ -101,8 +101,8 @@ const help = run("node", [join(tmp, "node_modules", PACKAGE_NAME, "dist/cli.mjs"
   cwd: tmp,
   silent: true,
 });
-if (!help.stdout?.includes(`${CLI_BIN} ensure`)) {
-  throw new Error(`CLI help missing ${CLI_BIN} ensure`);
+if (!help.stdout?.includes(`${CLI_BIN} acquire`)) {
+  throw new Error(`CLI help missing ${CLI_BIN} acquire`);
 }
 if (!help.stdout?.includes(`${CLI_BIN} run`)) {
   throw new Error(`CLI help missing ${CLI_BIN} run`);

@@ -3,13 +3,13 @@
 import { CLI_NAME } from "../core/constants.ts";
 import type { DbMode } from "../core/naming.ts";
 
-export const CEDAR_PG_TASK_ENSURE_DEV = "db:ensure";
-export const CEDAR_PG_TASK_ENSURE_TEST = "db:ensure-test";
+export const CEDAR_PG_TASK_ACQUIRE_DEV = "db:acquire";
+export const CEDAR_PG_TASK_ACQUIRE_TEST = "db:acquire-test";
 export const CEDAR_PG_TASK_DISPOSE_TEST = "db:dispose-test";
 
 export type CedarPgCommands = {
-  ensureDev: string;
-  ensureTest: string;
+  acquireDev: string;
+  acquireTest: string;
   disposeTest: string;
 };
 
@@ -26,8 +26,8 @@ export type CedarPgLifecycleTargetsOptions = {
 
 export function cedarPgCommands(bin = CLI_NAME): CedarPgCommands {
   return {
-    ensureDev: `${bin} ensure --mode=dev`,
-    ensureTest: `${bin} ensure --mode=test --print-env`,
+    acquireDev: `${bin} acquire --mode=dev`,
+    acquireTest: `${bin} acquire --mode=test --print-env`,
     disposeTest: `${bin} dispose --mode=test`,
   };
 }
@@ -37,8 +37,8 @@ export function cedarPgLifecycleTargets(
 ): Record<string, CedarPgLifecycleTarget> {
   const cmds = cedarPgCommands(options.bin ?? CLI_NAME);
   const targets: Record<string, CedarPgLifecycleTarget> = {
-    [CEDAR_PG_TASK_ENSURE_DEV]: { command: cmds.ensureDev, cache: false },
-    [CEDAR_PG_TASK_ENSURE_TEST]: { command: cmds.ensureTest, cache: false },
+    [CEDAR_PG_TASK_ACQUIRE_DEV]: { command: cmds.acquireDev, cache: false },
+    [CEDAR_PG_TASK_ACQUIRE_TEST]: { command: cmds.acquireTest, cache: false },
   };
   if (options.includeDisposeTest !== false) {
     targets[CEDAR_PG_TASK_DISPOSE_TEST] = { command: cmds.disposeTest, cache: false };

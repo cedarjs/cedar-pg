@@ -66,7 +66,7 @@ curl -fsSL "https://raw.githubusercontent.com/automagik-dev/autopg/${VER}/instal
   | AUTOPG_VERSION="$VER" bash
 ```
 
-Typical flow: `autopg daemon` (or your usual host install) once per machine → `cedarpg ensure` per worktree → connect with the printed `DATABASE_URL`.
+Typical flow: `autopg daemon` (or your usual host install) once per machine → `cedarpg acquire` per worktree → connect with the printed `DATABASE_URL`.
 
 ## Develop this package (Vite+)
 
@@ -93,8 +93,8 @@ yarn add @cedarjs/pg@file:../cedar-pg
 ## CLI
 
 ```bash
-cedarpg ensure --mode=dev
-cedarpg ensure --mode=test --print-env
+cedarpg acquire --mode=dev
+cedarpg acquire --mode=test --print-env
 cedarpg run --mode=dev -- yarn tsx scripts/apiServer/dev.ts
 cedarpg run --mode=test -- vitest run
 cedarpg dispose --mode=test
@@ -102,21 +102,21 @@ cedarpg print-url --mode=dev
 cedarpg gc   # drop DBs whose worktree root is gone (uses ~/.cedarpg/registry)
 ```
 
-`cedarpg run` ensures (or attaches the lease), force-sets `DATABASE_URL` (and
+`cedarpg run` acquires (or attaches the lease), force-sets `DATABASE_URL` (and
 `TEST_DATABASE_URL` in test mode) in the **child** process, then execs the command.
 Use it for Nx / e2e / API wrappers — local `.env` URLs do not win inside the child.
 
 ## Nx consumer adapter
 
-Nx `dependsOn` alone does not forward env from an ensure task into dependents
+Nx `dependsOn` alone does not forward env from an acquire task into dependents
 (Vite+ `env: [...]` does). **Canonical fix:** wrap the child with `cedarpg run`.
-Secondary: point Nx `envFile` at `.cedarpg/<mode>.env` after ensure.
+Secondary: point Nx `envFile` at `.cedarpg/<mode>.env` after acquire.
 
 ```ts
 import { cedarPgNxTargets, cedarPgRunCommand, relativeEnvFile } from "@cedarjs/pg/nx";
 
 cedarPgNxTargets();
-// { "db:ensure": { command: "cedarpg ensure --mode=dev", cache: false }, … }
+// { "db:acquire": { command: "cedarpg acquire --mode=dev", cache: false }, … }
 
 cedarPgRunCommand("dev", "yarn tsx scripts/apiServer/dev.ts");
 // "cedarpg run --mode=dev -- yarn tsx scripts/apiServer/dev.ts"
@@ -130,9 +130,9 @@ relativeEnvFile("dev"); // ".cedarpg/dev.env"
     "dev": {
       "command": "cedarpg run --mode=dev -- yarn tsx scripts/apiServer/dev.ts"
     },
-    "db:ensure": { "command": "cedarpg ensure --mode=dev" },
+    "db:acquire": { "command": "cedarpg acquire --mode=dev" },
     "serve": {
-      "dependsOn": ["db:ensure"],
+      "dependsOn": ["db:acquire"],
       "command": "node dist/server.js",
       "options": { "envFile": ".cedarpg/dev.env" }
     }
@@ -144,11 +144,11 @@ For a db:ready-style migrate hook (same compose shape as Jest `createGlobalSetup
 
 ```ts
 // tools/db-ready.ts
-import { createEnsureTask } from "@cedarjs/pg";
+import { createAcquireTask } from "@cedarjs/pg";
 
-await createEnsureTask({
+await createAcquireTask({
   mode: "dev",
-  afterEnsure: async ({ databaseUrl }) => {
+  afterAcquire: async ({ databaseUrl }) => {
     // prisma migrate deploy / drizzle push / …
   },
 })();
@@ -170,12 +170,12 @@ export default defineConfig({
       ...cedarPgTasks(),
       test: {
         command: "vp test",
-        dependsOn: ["db:ensure-test"],
+        dependsOn: ["db:acquire-test"],
         env: ["DATABASE_URL", "TEST_DATABASE_URL"],
       },
       dev: {
         command: "vp dev",
-        dependsOn: ["db:ensure"],
+        dependsOn: ["db:acquire"],
         env: ["DATABASE_URL"],
       },
     },
@@ -208,18 +208,18 @@ module.exports = {
 
 ### Framework hosts (CedarJS, custom globalSetup)
 
-If your runner already owns `globalSetup` (e.g. Prisma push/migrate after ensure), **do not** replace it with `@cedarjs/pg/jest`. Compose instead:
+If your runner already owns `globalSetup` (e.g. Prisma push/migrate after acquire), **do not** replace it with `@cedarjs/pg/jest`. Compose instead:
 
-1. In your `globalSetup`: call `ensureIfNeeded` when opted in, then run migrations.
+1. In your `globalSetup`: call `acquireIfNeeded` when opted in, then run migrations.
 2. Add `setupFiles: [require.resolve('@cedarjs/pg/test-env')]` so Jest **workers** see `DATABASE_URL`.
 3. In your `globalTeardown`: call `dispose({ mode: 'test', root })`.
 
 ```ts
 // framework globalSetup (sketch)
-import { ensureIfNeeded } from "@cedarjs/pg";
+import { acquireIfNeeded } from "@cedarjs/pg";
 
 if (process.env.CEDAR_PG === "1" || process.env.CEDAR_PG === "true") {
-  await ensureIfNeeded({
+  await acquireIfNeeded({
     root: projectRoot, // e.g. getPaths().base
     mode: "test",
     setEnv: true, // this process (prisma) — workers use @cedarjs/pg/test-env
@@ -242,14 +242,14 @@ Use exported `STATE_DIRNAME` (`.cedarpg`) / `loadTestEnv` / `loadDevEnv` /
 `loadTestEnv` / `loadDevEnv` only fill **undefined** keys by default. Pass
 `{ overwrite: true }` (or import `@cedarjs/pg/dev-env`) when a local `.env`
 `DATABASE_URL` / `TEST_DATABASE_URL` should lose to cedar-pg. That is not the
-same as `CEDAR_PG_FORCE` / ensure `{ force }` (external-URL escape hatch).
+same as `CEDAR_PG_FORCE` / acquire `{ force }` (external-URL escape hatch).
 
 ## Programmatic API
 
 ```ts
-import { ensure, dispose, loadTestEnv, loadDevEnv, envFilePath, STATE_DIRNAME } from "@cedarjs/pg";
+import { acquire, dispose, loadTestEnv, loadDevEnv, envFilePath, STATE_DIRNAME } from "@cedarjs/pg";
 
-const { databaseUrl, adminUrl, databaseName, dispose: drop } = await ensure({ mode: "test" });
+const { databaseUrl, adminUrl, databaseName, dispose: drop } = await acquire({ mode: "test" });
 // … tests …
 await drop();
 
@@ -260,13 +260,13 @@ loadDevEnv({ overwrite: true }); // override .env DATABASE_URL from .cedarpg/dev
 
 By default cedar-pg **attaches** to a live autopg host (`autopg status`). If none is live it runs bare `autopg install` (pm2) — fine for local machines, hostile to GitHub Actions (no pm2) and slower than RAM-backed CI.
 
-In CI, cedar-pg starts an **opinionated ephemeral host** automatically when `CI=true` (or when forced). Callers just use `ensure` — no host options bag:
+In CI, cedar-pg starts an **opinionated ephemeral host** automatically when `CI=true` (or when forced). Callers just use `acquire` — no host options bag:
 
 ```ts
-import { ensure } from "@cedarjs/pg";
+import { acquire } from "@cedarjs/pg";
 
 // CI=true → install --no-pm2 --no-ui + detached postmaster (--ram on Linux /dev/shm)
-const { databaseUrl } = await ensure({ mode: "test" });
+const { databaseUrl } = await acquire({ mode: "test" });
 ```
 
 | Signal                      | Effect                                                              |
@@ -304,7 +304,7 @@ The action runs `scripts/ci-install-autopg.sh` under the hood. For published-pac
 
 ### Migrate-once + TEMPLATE clones (Jest / Vitest)
 
-Stock `@cedarjs/pg/jest` and `@cedarjs/pg/vitest` only run `ensureIfNeeded` + `dispose` (one shared test DB). They are **not** a full replacement for Redwood-style globalSetup that migrates once and clones per worker. For that, use template mode.
+Stock `@cedarjs/pg/jest` and `@cedarjs/pg/vitest` only run `acquireIfNeeded` + `dispose` (one shared test DB). They are **not** a full replacement for Redwood-style globalSetup that migrates once and clones per worker. For that, use template mode.
 
 Migrate stays app-owned via `createGlobalSetup({ migrate })`, then the adapter marks TEMPLATE and clones per worker. Point `globalSetup` at a **local** module that calls `createGlobalSetup` — string-resolving the package entry without a migrate hook throws.
 
@@ -327,8 +327,8 @@ module.exports = {
 };
 
 // jest.cedar-worker.cjs — once per worker process
-const { ensureWorkerDatabase } = require("@cedarjs/pg/jest/template");
-beforeAll(() => ensureWorkerDatabase());
+const { cloneWorkerDatabase } = require("@cedarjs/pg/jest/template");
+beforeAll(() => cloneWorkerDatabase());
 ```
 
 **Vitest (template mode):**
@@ -351,47 +351,47 @@ export default defineConfig({
 });
 
 // vitest.cedar-worker.ts — once per worker process (ESM top-level await)
-import { ensureWorkerDatabase } from "@cedarjs/pg/vitest/template";
-await ensureWorkerDatabase();
+import { cloneWorkerDatabase } from "@cedarjs/pg/vitest/template";
+await cloneWorkerDatabase();
 ```
 
 **Programmatic** (core API — no runner adapters):
 
 ```ts
-import { ensure, markTemplate, cloneFromTemplate, dispose } from "@cedarjs/pg";
+import { acquire, markTemplate, cloneFromTemplate, dispose } from "@cedarjs/pg";
 
-const ensured = await ensure({ mode: "test" });
-await migrate({ databaseUrl: ensured.databaseUrl, adminUrl: ensured.adminUrl });
-await markTemplate({ root: ensured.root, mode: "test", adminUrl: ensured.adminUrl });
+const acquired = await acquire({ mode: "test" });
+await migrate({ databaseUrl: acquired.databaseUrl, adminUrl: acquired.adminUrl });
+await markTemplate({ root: acquired.root, mode: "test", adminUrl: acquired.adminUrl });
 const worker = await cloneFromTemplate({
-  root: ensured.root,
+  root: acquired.root,
   mode: "test",
   name: "1",
   setEnv: true,
 });
 // … tests …
 await worker.dropClone(); // optional: drop one clone only
-await dispose({ root: ensured.root, mode: "test" }); // role-scoped: TEMPLATE + all clones + role
+await dispose({ root: acquired.root, mode: "test" }); // role-scoped: TEMPLATE + all clones + role
 ```
 
-`ensure` returns `adminUrl` for migrate hooks / privileged DDL; `markTemplate` / `cloneFromTemplate` accept it or rediscover the host when omitted.
-`cloneFromTemplate` uses the admin connection internally (`CREATE DATABASE … TEMPLATE`); test roles stay `LOGIN`-only. `setEnv` defaults to false on `cloneFromTemplate`; `cloneFromTemplateIfNeeded` defaults true (same as `ensureIfNeeded`).
-Worker adapters call `cloneFromTemplateIfNeeded` (shared skip policy via `runIfNeeded`) via `ensureWorkerDatabase`.
+`acquire` returns `adminUrl` for migrate hooks / privileged DDL; `markTemplate` / `cloneFromTemplate` accept it or rediscover the host when omitted.
+`cloneFromTemplate` uses the admin connection internally (`CREATE DATABASE … TEMPLATE`); test roles stay `LOGIN`-only. `setEnv` defaults to false on `cloneFromTemplate`; `cloneFromTemplateIfNeeded` defaults true (same as `acquireIfNeeded`).
+Worker adapters call `cloneFromTemplateIfNeeded` (shared skip policy via `runIfNeeded`) via `cloneWorkerDatabase`.
 `dispose` is role-scoped suite teardown (not `dropClone`): unsets `IS_TEMPLATE` and drops every database owned by the lease role.
 
 ## Env
 
-| Var                            | Meaning                                                                                                       |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| `AUTOPG_BIN`                   | Path to autopg                                                                                                |
-| `AUTOPG_PG_USER` / `_PASSWORD` | Autopg superuser for admin URL (default `postgres` / `postgres`)                                              |
-| `CEDAR_PG=0`                   | Disable auto-ensure in adapters                                                                               |
-| `TEST_DATABASE_URL`            | Escape hatch: skip ensure for real external DBs (not `cpg_*` / `file:` / `{…}` / `<…>` template placeholders) |
-| `CEDAR_PG_FORCE=1`             | Ignore external-URL escape hatch (adapters + `cedarpg ensure --force` / `run --force`)                        |
-| `CEDAR_PG_EPHEMERAL_HOST`      | `1` force / `0` disable ephemeral host (auto when `CI=true`)                                                  |
-| `CEDAR_PG_REGISTRY_DIR`        | Override global lease registry (for `gc`)                                                                     |
-| `CEDAR_PG_SKIP_POSTINSTALL=1`  | Skip autopg install hook                                                                                      |
-| `CEDAR_PG_INSTALL_AUTOPG=1`    | Under `CI=true`, run binary-only `ci-install-autopg.sh` from postinstall                                      |
+| Var                            | Meaning                                                                                                        |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `AUTOPG_BIN`                   | Path to autopg                                                                                                 |
+| `AUTOPG_PG_USER` / `_PASSWORD` | Autopg superuser for admin URL (default `postgres` / `postgres`)                                               |
+| `CEDAR_PG=0`                   | Disable auto-acquire in adapters                                                                               |
+| `TEST_DATABASE_URL`            | Escape hatch: skip acquire for real external DBs (not `cpg_*` / `file:` / `{…}` / `<…>` template placeholders) |
+| `CEDAR_PG_FORCE=1`             | Ignore external-URL escape hatch (adapters + `cedarpg acquire --force` / `run --force`)                        |
+| `CEDAR_PG_EPHEMERAL_HOST`      | `1` force / `0` disable ephemeral host (auto when `CI=true`)                                                   |
+| `CEDAR_PG_REGISTRY_DIR`        | Override global lease registry (for `gc`)                                                                      |
+| `CEDAR_PG_SKIP_POSTINSTALL=1`  | Skip autopg install hook                                                                                       |
+| `CEDAR_PG_INSTALL_AUTOPG=1`    | Under `CI=true`, run binary-only `ci-install-autopg.sh` from postinstall                                       |
 
 ## Alpha caveats
 
@@ -401,4 +401,4 @@ Worker adapters call `cloneFromTemplateIfNeeded` (shared skip policy via `runIfN
   (ephemeral cold-start when the runner has no live host; attach-wins otherwise).
 - State lives in product-owned `.cedarpg` (worktree + `~/.cedarpg/registry`), not under autopg's `~/.autopg/` or a generic `.pg`.
 - Role passwords are derived from `roleName` (`cedar-pg\\0` + roleName, scheme v2) so TEMPLATE clones that reuse a role keep working; bump the scheme id to change the derivation.
-- Test TEMPLATE flow: `ensure` → app migrate → `markTemplate` → `cloneFromTemplate` → role-scoped `dispose`. Optional `@cedarjs/pg/jest/template` + `@cedarjs/pg/vitest/template` adapters orchestrate that pipeline via `createGlobalSetup({ migrate })`; migrate stays app-owned.
+- Test TEMPLATE flow: `acquire` → app migrate → `markTemplate` → `cloneFromTemplate` → role-scoped `dispose`. Optional `@cedarjs/pg/jest/template` + `@cedarjs/pg/vitest/template` adapters orchestrate that pipeline via `createGlobalSetup({ migrate })`; migrate stays app-owned.

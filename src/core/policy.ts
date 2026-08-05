@@ -1,19 +1,19 @@
 /**
- * Shared ensure skip policy for test-runner adapters and Cedar CLI bridges.
+ * Shared acquire skip policy for test-runner adapters and Cedar CLI bridges.
  */
 
-export type EnsureSkip =
+export type AcquireSkip =
   | { skip: false }
   | { skip: true; reason: "disabled" }
   | { skip: true; reason: "external-url"; databaseUrl: string };
 
-export type ResolveEnsureSkipInput = {
+export type ResolveAcquireSkipInput = {
   /** Candidate URL (TEST_DATABASE_URL for tests, DATABASE_URL for dev). */
   url?: string;
   /** When true, never skip (CEDAR_PG_FORCE=1). */
   force?: boolean;
   /**
-   * When true, skip ensure entirely.
+   * When true, skip acquire entirely.
    * Defaults from CEDAR_PG=0|false (opt-out adapters). Pass `false` for Cedar opt-in flows.
    */
   disabled?: boolean;
@@ -21,7 +21,7 @@ export type ResolveEnsureSkipInput = {
 
 /**
  * Inject DATABASE_URL (and TEST_DATABASE_URL for test mode) from a resolved URL.
- * Single env path for ensure, clone, and external-url skip.
+ * Single env path for acquire, clone, and external-url skip.
  */
 export function applyDatabaseUrlEnv(
   databaseUrl: string,
@@ -33,9 +33,9 @@ export function applyDatabaseUrlEnv(
   }
 }
 
-export type RunIfNeededOptions = ResolveEnsureSkipInput & {
+export type RunIfNeededOptions = ResolveAcquireSkipInput & {
   mode: "dev" | "test";
-  /** Default true (same as ensure / clone host wrappers). */
+  /** Default true (same as acquire / clone host wrappers). */
   setEnv?: boolean;
 };
 
@@ -46,14 +46,14 @@ export type RunIfNeededSkipped =
 export type RunIfNeededResult<T> = RunIfNeededSkipped | { status: "ran"; value: T };
 
 /**
- * Shared host skip+env gate for `ensureIfNeeded` / `cloneFromTemplateIfNeeded`.
+ * Shared host skip+env gate for `acquireIfNeeded` / `cloneFromTemplateIfNeeded`.
  * On external-url skip, applies env when `setEnv` is not false.
  */
 export async function runIfNeeded<T>(
   options: RunIfNeededOptions,
   run: () => Promise<T>,
 ): Promise<RunIfNeededResult<T>> {
-  const skip = resolveEnsureSkip({
+  const skip = resolveAcquireSkip({
     url: options.url,
     force: options.force,
     disabled: options.disabled,
@@ -72,7 +72,7 @@ export async function runIfNeeded<T>(
 
 /**
  * True when the URL looks like a cedarpg provisioned database (`cpg_*` name/role).
- * These must never be treated as an external escape hatch; always re-ensure so
+ * These must never be treated as an external escape hatch; always re-acquire so
  * disposed/stale shell env cannot skip provisioning.
  */
 export function isCedarPgManagedUrl(url: string | undefined): boolean {
@@ -103,7 +103,7 @@ function isUnsetTemplateUrl(url: string): boolean {
 }
 
 /**
- * True when `url` is a real external database and ensure should be skipped.
+ * True when `url` is a real external database and acquire should be skipped.
  * Sqlite `file:` URLs, cedarpg `cpg_*` URLs, and unset template placeholders
  * are not external.
  */
@@ -116,11 +116,11 @@ export function isExternalDatabaseEscapeHatch(url: string | undefined): boolean 
 }
 
 /**
- * Decide whether ensure should run.
+ * Decide whether acquire should run.
  * Adapters may call with no args (env defaults). Cedar opt-in should pass `disabled: false`
  * and the relevant `url` (`DATABASE_URL` or `TEST_DATABASE_URL`).
  */
-export function resolveEnsureSkip(input: ResolveEnsureSkipInput = {}): EnsureSkip {
+export function resolveAcquireSkip(input: ResolveAcquireSkipInput = {}): AcquireSkip {
   const disabled =
     input.disabled ?? (process.env.CEDAR_PG === "0" || process.env.CEDAR_PG === "false");
   if (disabled) {

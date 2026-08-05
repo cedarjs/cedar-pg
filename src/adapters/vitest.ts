@@ -1,4 +1,4 @@
-import { ensureIfNeeded } from "../core/lifecycle.ts";
+import { acquireIfNeeded } from "../core/lifecycle.ts";
 
 /**
  * Vitest globalSetup for a single shared test DB.
@@ -18,11 +18,11 @@ import { ensureIfNeeded } from "../core/lifecycle.ts";
  * ```
  */
 export default async function setup(): Promise<() => Promise<void>> {
-  const result = await ensureIfNeeded({
+  const result = await acquireIfNeeded({
     mode: "test",
     setEnv: true,
   });
-  if (result.status !== "ensured") {
+  if (result.status !== "acquired") {
     return async () => {};
   }
   return async () => {

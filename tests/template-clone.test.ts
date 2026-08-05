@@ -52,7 +52,7 @@ async function withHostAndAutopgMocks<T>(
   }
 }
 
-test("ensure returns adminUrl alongside databaseUrl", async () => {
+test("acquire returns adminUrl alongside databaseUrl", async () => {
   const registry = mkdtempSync(join(tmpdir(), "cedarpg-reg-"));
   const root = mkdtempSync(join(tmpdir(), "cedarpg-wt-"));
   const prev = process.env.CEDAR_PG_REGISTRY_DIR;
@@ -62,8 +62,8 @@ test("ensure returns adminUrl alongside databaseUrl", async () => {
 
   try {
     await withHostAndAutopgMocks(adminUrl, { ensureDatabase: vi.fn(async () => {}) }, async () => {
-      const { ensure } = await import("../src/core/lifecycle.ts");
-      const result = await ensure({ root, mode: "test", setEnv: false });
+      const { acquire } = await import("../src/core/lifecycle.ts");
+      const result = await acquire({ root, mode: "test", setEnv: false });
       expect(result.adminUrl).toBe(adminUrl);
       expect(result.port).toBe(5433);
       expect(result.databaseUrl).toContain("127.0.0.1:5433");
@@ -421,7 +421,7 @@ test("cloneFromTemplateIfNeeded external-url skip applies DATABASE_URL env", asy
   }
 });
 
-test("cloneFromTemplateIfNeeded clones when ensure policy allows", async () => {
+test("cloneFromTemplateIfNeeded clones when acquire policy allows", async () => {
   const registry = mkdtempSync(join(tmpdir(), "cedarpg-reg-"));
   const root = mkdtempSync(join(tmpdir(), "cedarpg-wt-"));
   const prev = process.env.CEDAR_PG_REGISTRY_DIR;
