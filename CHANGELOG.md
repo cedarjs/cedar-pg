@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- Vite plugin `cedarPgDev()` (`@cedarjs/pg/vite-plus`): status panel on listen + shortcuts `d` (status) / `p` (Prisma or Drizzle Studio)
+- CLI: `cedarpg status` (human + `--json`) and `cedarpg studio` (`--prisma` / `--drizzle`)
+- Public `resolveDevStatus` / `formatDevStatus` for scripting
+
 ### Fixed
 
 - TEMPLATE `cloneWorkerDatabase`: default clone name is unique per call (`<worker>_<pid>_<time>`) so Jest `setupFiles` (module reload per file) no longer hits `database already exists` on `_c_<workerId>`

@@ -1,15 +1,17 @@
 /**
  * Consumer adapter for external Vite+ projects.
  *
- * Merge into `vite.config.ts` `run.tasks` so `vp run test` / `vp run dev`
- * depend on cedarpg acquire.
+ * - `cedarPgTasks()` — merge into `run.tasks` so `vp run test` / `vp run dev`
+ *   depend on cedarpg acquire.
+ * - `cedarPgDev()` — Vite plugin: status panel + `d` / `p` shortcuts (no acquire).
  *
  * @example
  * ```ts
  * import { defineConfig } from 'vite-plus'
- * import { cedarPgTasks } from '@cedarjs/pg/vite-plus'
+ * import { cedarPgTasks, cedarPgDev } from '@cedarjs/pg/vite-plus'
  *
  * export default defineConfig({
+ *   plugins: [cedarPgDev()],
  *   run: {
  *     tasks: {
  *       ...cedarPgTasks(),
@@ -47,3 +49,6 @@ export {
 
 export type CedarPgTaskDef = CedarPgLifecycleTarget;
 export type CedarPgTasksOptions = CedarPgLifecycleTargetsOptions;
+
+export { cedarPgDev } from "./vite-dev-plugin.ts";
+export type { CedarPgDevOptions } from "./vite-dev-plugin.ts";

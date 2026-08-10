@@ -4,7 +4,9 @@ import { CLI_NAME } from "./core/constants.ts";
 import { acquire, dispose, gc, urlFromLease } from "./core/lifecycle.ts";
 import { resolveWorktreeIdentity } from "./core/worktree.ts";
 import { readLease } from "./core/lease.ts";
+import { formatDevStatus, resolveDevStatus } from "./core/status.ts";
 import type { DbMode } from "./core/naming.ts";
+import { detectStudio, openStudio, type StudioKind } from "./adapters/studio.ts";
 
 function printHelp(): void {
   process.stdout.write(`${CLI_NAME}: worktree-isolated local Postgres (via autopg)
@@ -15,6 +17,8 @@ Usage:
   ${CLI_NAME} dispose [--mode=dev|test] [--root <path>]
   ${CLI_NAME} gc [--json]
   ${CLI_NAME} print-url [--mode=dev|test] [--root <path>]
+  ${CLI_NAME} status [--mode=dev|test] [--root <path>] [--json]
+  ${CLI_NAME} studio [--mode=dev|test] [--root <path>] [--prisma|--drizzle]
   ${CLI_NAME} --help
 
 Modes:
@@ -24,6 +28,10 @@ Modes:
 run:
   Acquire, set DATABASE_URL (+ TEST_DATABASE_URL in test) on the child, exec <cmd…>.
   --force sets CEDAR_PG_FORCE (escape hatch); child env overwrite is always on.
+
+status / studio:
+  Read-only lease inspection (no acquire). studio opens Prisma or Drizzle Kit Studio
+  with DATABASE_URL from the lease (auto-detect; --prisma / --drizzle to force).
 
 Env:
   AUTOPG_BIN       Path to autopg binary
@@ -45,6 +53,8 @@ type ParsedArgs = {
   printEnv?: boolean;
   force?: boolean;
   help?: boolean;
+  prisma?: boolean;
+  drizzle?: boolean;
   child?: string[];
 };
 
@@ -66,6 +76,8 @@ function parseArgs(argv: string[]): ParsedArgs {
     else if (a === "--json") out.json = true;
     else if (a === "--print-env") out.printEnv = true;
     else if (a === "--force") out.force = true;
+    else if (a === "--prisma") out.prisma = true;
+    else if (a === "--drizzle") out.drizzle = true;
     else if (a.startsWith("--mode=")) out.mode = parseMode(a.slice(7));
     else if (a === "--mode") out.mode = parseMode(flagArgs[++i]);
     else if (a.startsWith("--root=")) out.root = a.slice(7);
@@ -73,6 +85,15 @@ function parseArgs(argv: string[]): ParsedArgs {
     else throw new Error(`unknown argument: ${a}`);
   }
   return out;
+}
+
+function studioPrefer(args: ParsedArgs): StudioKind | undefined {
+  if (args.prisma && args.drizzle) {
+    throw new Error("pass only one of --prisma or --drizzle");
+  }
+  if (args.prisma) return "prisma";
+  if (args.drizzle) return "drizzle";
+  return undefined;
 }
 
 function runChild(command: string[], env: NodeJS.ProcessEnv): Promise<number> {
@@ -201,6 +222,67 @@ async function main(): Promise<number> {
         return 2;
       }
       process.stdout.write(`${urlFromLease(lease)}\n`);
+      return 0;
+    }
+
+    if (args.cmd === "status") {
+      const mode = args.mode ?? "dev";
+      const status = resolveDevStatus({ root: args.root, mode });
+      if (args.json) {
+        if (!status.ok) {
+          process.stdout.write(
+            `${JSON.stringify({ ok: false, reason: status.reason, mode: status.mode, root: status.root }, null, 2)}\n`,
+          );
+          return 2;
+        }
+        process.stdout.write(
+          `${JSON.stringify(
+            {
+              ok: true,
+              mode: status.mode,
+              root: status.root,
+              databaseUrl: status.databaseUrl,
+              envPath: status.envPath,
+              databaseName: status.lease.databaseName,
+              roleName: status.lease.roleName,
+              repoSlug: status.lease.repoSlug,
+              worktreeSlug: status.lease.worktreeSlug,
+              port: status.lease.port,
+              createdAt: status.lease.createdAt,
+            },
+            null,
+            2,
+          )}\n`,
+        );
+        return 0;
+      }
+      for (const line of formatDevStatus(status)) {
+        process.stdout.write(`${line}\n`);
+      }
+      return status.ok ? 0 : 2;
+    }
+
+    if (args.cmd === "studio") {
+      const mode = args.mode ?? "dev";
+      const prefer = studioPrefer(args);
+      const status = resolveDevStatus({ root: args.root, mode });
+      if (!status.ok) {
+        for (const line of formatDevStatus(status)) {
+          process.stderr.write(`${line}\n`);
+        }
+        return 2;
+      }
+      const studio = detectStudio({ root: status.root, prefer });
+      if (!studio) {
+        process.stderr.write(
+          `${CLI_NAME}: no Prisma or Drizzle Studio found (install prisma or drizzle-kit)\n`,
+        );
+        return 1;
+      }
+      openStudio({ root: status.root, databaseUrl: status.databaseUrl, studio });
+      process.stdout.write(
+        `${CLI_NAME}: opening ${studio.kind} studio (${studio.command} ${studio.args.join(" ")})\n`,
+      );
       return 0;
     }
 
