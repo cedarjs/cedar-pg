@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { dispose, acquireIfNeeded, type AcquireIfNeededResult } from "../core/lifecycle.ts";
 import { cloneFromTemplateIfNeeded, markTemplate } from "../core/template.ts";
 
@@ -66,10 +67,10 @@ export async function setupTemplateMode(
 export type CloneWorkerDatabaseOptions = {
   root?: string;
   /**
-   * Clone suffix. Prefer omitting this: the default is unique per call
-   * (`<worker|w>_<pid>_<base36 time>`) so Jest `setupFiles` (module reload per
-   * file) does not collide on `CREATE DATABASE …_c_<workerId>`.
-   * Process-once memo still dedupes within a single module load
+   * Clone suffix. Prefer omitting this: the default is unique per module load
+   * (`<worker|w>_<pid>_<base36 time>_<entropy>`) so Jest `setupFiles` (module
+   * reload per file) does not collide on `CREATE DATABASE …_c_<workerId>`.
+   * Unnamed calls reuse one generated name so process-once memo stays stable
    * (`setupFilesAfterEnv` + `beforeAll`, or Vitest `setupFiles` with top-level await).
    */
   name?: string;
@@ -77,19 +78,24 @@ export type CloneWorkerDatabaseOptions = {
 
 let workerOnce: Promise<void> | undefined;
 let workerOnceKey: string | undefined;
+/** Retained default for unnamed calls within one module load. */
+let retainedDefaultName: string | undefined;
 
 /** Unique clone suffix; exported for tests. */
 export function defaultCloneWorkerName(
   env: NodeJS.ProcessEnv = process.env,
   pid: number = process.pid,
   now: number = Date.now(),
+  entropy: string = randomBytes(3).toString("hex"),
 ): string {
   const worker = env.JEST_WORKER_ID ?? env.VITEST_POOL_ID ?? "w";
-  return `${worker}_${pid}_${now.toString(36)}`;
+  return `${worker}_${pid}_${now.toString(36)}_${entropy}`;
 }
 
 function resolveWorkerName(options: CloneWorkerDatabaseOptions): string {
-  return options.name ?? defaultCloneWorkerName();
+  if (options.name !== undefined) return options.name;
+  retainedDefaultName ??= defaultCloneWorkerName();
+  return retainedDefaultName;
 }
 
 function workerOptionsKey(root: string | undefined, name: string): string {
@@ -97,7 +103,7 @@ function workerOptionsKey(root: string | undefined, name: string): string {
 }
 
 /**
- * Process-once clone (unique default name; see {@link defaultCloneWorkerName}).
+ * Process-once clone (unique default name per module load; see {@link defaultCloneWorkerName}).
  * Uses `cloneFromTemplateIfNeeded` (same skip policy as `acquireIfNeeded`) with `setEnv: true`.
  * First call wins for `root`/`name`; conflicting later calls throw.
  *
@@ -128,6 +134,7 @@ export function cloneWorkerDatabase(options: CloneWorkerDatabaseOptions = {}): P
   })().catch((err) => {
     workerOnce = undefined;
     workerOnceKey = undefined;
+    retainedDefaultName = undefined;
     throw err;
   });
   return workerOnce;

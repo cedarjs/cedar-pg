@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- TEMPLATE `cloneWorkerDatabase`: default clone name is unique per call (`<worker>_<pid>_<time>`) so Jest `setupFiles` (module reload per file) no longer hits `database already exists` on `_c_<workerId>`
+- TEMPLATE `cloneWorkerDatabase`: default clone name is unique per module load (`<worker>_<pid>_<time>_<entropy>`) so Jest `setupFiles` (module reload per file) no longer hits `database already exists` on `_c_<workerId>`; unnamed calls retain one name so process-once memo stays stable
 
 ## 0.2.0-alpha.0
 

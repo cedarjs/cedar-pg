@@ -171,14 +171,14 @@ test("setupTemplateMode skips migrate/mark when acquire is skipped", async () =>
   });
 });
 
-test("defaultCloneWorkerName is unique per call (setupFiles-safe)", async () => {
+test("defaultCloneWorkerName is unique across identical timestamps (setupFiles-safe)", async () => {
   const { defaultCloneWorkerName } = await import("../src/adapters/template-mode.ts");
-  const a = defaultCloneWorkerName({ JEST_WORKER_ID: "3" }, 42, 1_700_000_000_000);
-  const b = defaultCloneWorkerName({ JEST_WORKER_ID: "3" }, 42, 1_700_000_000_001);
-  expect(a).toBe(`3_42_${(1_700_000_000_000).toString(36)}`);
-  expect(b).toBe(`3_42_${(1_700_000_000_001).toString(36)}`);
+  const a = defaultCloneWorkerName({ JEST_WORKER_ID: "3" }, 42, 1_700_000_000_000, "aaa111");
+  const b = defaultCloneWorkerName({ JEST_WORKER_ID: "3" }, 42, 1_700_000_000_000, "bbb222");
+  expect(a).toBe(`3_42_${(1_700_000_000_000).toString(36)}_aaa111`);
+  expect(b).toBe(`3_42_${(1_700_000_000_000).toString(36)}_bbb222`);
   expect(a).not.toBe(b);
-  expect(defaultCloneWorkerName({}, 7, 99)).toBe(`w_7_${(99).toString(36)}`);
+  expect(defaultCloneWorkerName({}, 7, 99, "ccc333")).toBe(`w_7_${(99).toString(36)}_ccc333`);
 });
 
 test("cloneWorkerDatabase clones via cloneFromTemplateIfNeeded with setEnv true", async () => {
@@ -208,7 +208,7 @@ test("cloneWorkerDatabase clones via cloneFromTemplateIfNeeded with setEnv true"
   }
 });
 
-test("cloneWorkerDatabase default name includes worker, pid, and time", async () => {
+test("cloneWorkerDatabase default name includes worker, pid, time, and entropy", async () => {
   const prevJest = process.env.JEST_WORKER_ID;
   const prevCedar = process.env.CEDAR_PG;
   process.env.JEST_WORKER_ID = "3";
@@ -225,13 +225,36 @@ test("cloneWorkerDatabase default name includes worker, pid, and time", async ()
           root: "/tmp/wt",
           mode: "test",
           setEnv: true,
-          name: expect.stringMatching(new RegExp(`^3_${process.pid}_[0-9a-z]+$`)),
+          name: expect.stringMatching(new RegExp(`^3_${process.pid}_[0-9a-z]+_[0-9a-f]{6}$`)),
         }),
       );
     });
   } finally {
     if (prevJest === undefined) delete process.env.JEST_WORKER_ID;
     else process.env.JEST_WORKER_ID = prevJest;
+    if (prevCedar === undefined) delete process.env.CEDAR_PG;
+    else process.env.CEDAR_PG = prevCedar;
+  }
+});
+
+test("cloneWorkerDatabase unnamed calls reuse retained default name", async () => {
+  const prevCedar = process.env.CEDAR_PG;
+  delete process.env.CEDAR_PG;
+
+  const cloneFromTemplateIfNeeded = vi.fn(async () =>
+    clonedWorker({ databaseName: "cpg_tmpl_c_1" }),
+  );
+
+  try {
+    await withMockedCore({ cloneFromTemplateIfNeeded }, async () => {
+      const { cloneWorkerDatabase } = await import("../src/adapters/template-mode.ts");
+      await cloneWorkerDatabase({ root: "/tmp/wt" });
+      // Different wall time must not change the retained default key.
+      await new Promise((r) => setTimeout(r, 2));
+      await cloneWorkerDatabase({ root: "/tmp/wt" });
+      expect(cloneFromTemplateIfNeeded).toHaveBeenCalledTimes(1);
+    });
+  } finally {
     if (prevCedar === undefined) delete process.env.CEDAR_PG;
     else process.env.CEDAR_PG = prevCedar;
   }
