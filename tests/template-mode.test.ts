@@ -171,6 +171,16 @@ test("setupTemplateMode skips migrate/mark when acquire is skipped", async () =>
   });
 });
 
+test("defaultCloneWorkerName is unique per call (setupFiles-safe)", async () => {
+  const { defaultCloneWorkerName } = await import("../src/adapters/template-mode.ts");
+  const a = defaultCloneWorkerName({ JEST_WORKER_ID: "3" }, 42, 1_700_000_000_000);
+  const b = defaultCloneWorkerName({ JEST_WORKER_ID: "3" }, 42, 1_700_000_000_001);
+  expect(a).toBe(`3_42_${(1_700_000_000_000).toString(36)}`);
+  expect(b).toBe(`3_42_${(1_700_000_000_001).toString(36)}`);
+  expect(a).not.toBe(b);
+  expect(defaultCloneWorkerName({}, 7, 99)).toBe(`w_7_${(99).toString(36)}`);
+});
+
 test("cloneWorkerDatabase clones via cloneFromTemplateIfNeeded with setEnv true", async () => {
   const prevJest = process.env.JEST_WORKER_ID;
   const prevCedar = process.env.CEDAR_PG;
@@ -182,11 +192,11 @@ test("cloneWorkerDatabase clones via cloneFromTemplateIfNeeded with setEnv true"
   try {
     await withMockedCore({ cloneFromTemplateIfNeeded }, async () => {
       const { cloneWorkerDatabase } = await import("../src/adapters/template-mode.ts");
-      await cloneWorkerDatabase({ root: "/tmp/wt" });
+      await cloneWorkerDatabase({ root: "/tmp/wt", name: "explicit" });
       expect(cloneFromTemplateIfNeeded).toHaveBeenCalledWith({
         root: "/tmp/wt",
         mode: "test",
-        name: "3",
+        name: "explicit",
         setEnv: true,
       });
     });
@@ -198,22 +208,26 @@ test("cloneWorkerDatabase clones via cloneFromTemplateIfNeeded with setEnv true"
   }
 });
 
-test("cloneWorkerDatabase is idempotent per process", async () => {
+test("cloneWorkerDatabase default name includes worker, pid, and time", async () => {
   const prevJest = process.env.JEST_WORKER_ID;
   const prevCedar = process.env.CEDAR_PG;
-  process.env.JEST_WORKER_ID = "1";
+  process.env.JEST_WORKER_ID = "3";
   delete process.env.CEDAR_PG;
 
-  const cloneFromTemplateIfNeeded = vi.fn(async () =>
-    clonedWorker({ databaseName: "cpg_tmpl_c_1" }),
-  );
+  const cloneFromTemplateIfNeeded = vi.fn(async () => clonedWorker());
 
   try {
     await withMockedCore({ cloneFromTemplateIfNeeded }, async () => {
       const { cloneWorkerDatabase } = await import("../src/adapters/template-mode.ts");
-      await cloneWorkerDatabase();
-      await cloneWorkerDatabase();
-      expect(cloneFromTemplateIfNeeded).toHaveBeenCalledTimes(1);
+      await cloneWorkerDatabase({ root: "/tmp/wt" });
+      expect(cloneFromTemplateIfNeeded).toHaveBeenCalledWith(
+        expect.objectContaining({
+          root: "/tmp/wt",
+          mode: "test",
+          setEnv: true,
+          name: expect.stringMatching(new RegExp(`^3_${process.pid}_[0-9a-z]+$`)),
+        }),
+      );
     });
   } finally {
     if (prevJest === undefined) delete process.env.JEST_WORKER_ID;
@@ -223,10 +237,8 @@ test("cloneWorkerDatabase is idempotent per process", async () => {
   }
 });
 
-test("cloneWorkerDatabase rejects conflicting root/name after first call", async () => {
-  const prevJest = process.env.JEST_WORKER_ID;
+test("cloneWorkerDatabase is idempotent per process", async () => {
   const prevCedar = process.env.CEDAR_PG;
-  process.env.JEST_WORKER_ID = "1";
   delete process.env.CEDAR_PG;
 
   const cloneFromTemplateIfNeeded = vi.fn(async () =>
@@ -236,15 +248,34 @@ test("cloneWorkerDatabase rejects conflicting root/name after first call", async
   try {
     await withMockedCore({ cloneFromTemplateIfNeeded }, async () => {
       const { cloneWorkerDatabase } = await import("../src/adapters/template-mode.ts");
-      await cloneWorkerDatabase({ root: "/tmp/a" });
-      expect(() => cloneWorkerDatabase({ root: "/tmp/b" })).toThrow(
+      await cloneWorkerDatabase({ name: "stable" });
+      await cloneWorkerDatabase({ name: "stable" });
+      expect(cloneFromTemplateIfNeeded).toHaveBeenCalledTimes(1);
+    });
+  } finally {
+    if (prevCedar === undefined) delete process.env.CEDAR_PG;
+    else process.env.CEDAR_PG = prevCedar;
+  }
+});
+
+test("cloneWorkerDatabase rejects conflicting root/name after first call", async () => {
+  const prevCedar = process.env.CEDAR_PG;
+  delete process.env.CEDAR_PG;
+
+  const cloneFromTemplateIfNeeded = vi.fn(async () =>
+    clonedWorker({ databaseName: "cpg_tmpl_c_1" }),
+  );
+
+  try {
+    await withMockedCore({ cloneFromTemplateIfNeeded }, async () => {
+      const { cloneWorkerDatabase } = await import("../src/adapters/template-mode.ts");
+      await cloneWorkerDatabase({ root: "/tmp/a", name: "n" });
+      expect(() => cloneWorkerDatabase({ root: "/tmp/b", name: "n" })).toThrow(
         /already started with different root\/name/,
       );
       expect(cloneFromTemplateIfNeeded).toHaveBeenCalledTimes(1);
     });
   } finally {
-    if (prevJest === undefined) delete process.env.JEST_WORKER_ID;
-    else process.env.JEST_WORKER_ID = prevJest;
     if (prevCedar === undefined) delete process.env.CEDAR_PG;
     else process.env.CEDAR_PG = prevCedar;
   }

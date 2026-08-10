@@ -65,17 +65,31 @@ export async function setupTemplateMode(
 
 export type CloneWorkerDatabaseOptions = {
   root?: string;
-  /** Clone suffix; defaults to JEST_WORKER_ID / VITEST_POOL_ID / pid. */
+  /**
+   * Clone suffix. Prefer omitting this: the default is unique per call
+   * (`<worker|w>_<pid>_<base36 time>`) so Jest `setupFiles` (module reload per
+   * file) does not collide on `CREATE DATABASE …_c_<workerId>`.
+   * Process-once memo still dedupes within a single module load
+   * (`setupFilesAfterEnv` + `beforeAll`, or Vitest `setupFiles` with top-level await).
+   */
   name?: string;
 };
 
 let workerOnce: Promise<void> | undefined;
 let workerOnceKey: string | undefined;
 
+/** Unique clone suffix; exported for tests. */
+export function defaultCloneWorkerName(
+  env: NodeJS.ProcessEnv = process.env,
+  pid: number = process.pid,
+  now: number = Date.now(),
+): string {
+  const worker = env.JEST_WORKER_ID ?? env.VITEST_POOL_ID ?? "w";
+  return `${worker}_${pid}_${now.toString(36)}`;
+}
+
 function resolveWorkerName(options: CloneWorkerDatabaseOptions): string {
-  return (
-    options.name ?? process.env.JEST_WORKER_ID ?? process.env.VITEST_POOL_ID ?? String(process.pid)
-  );
+  return options.name ?? defaultCloneWorkerName();
 }
 
 function workerOptionsKey(root: string | undefined, name: string): string {
@@ -83,9 +97,13 @@ function workerOptionsKey(root: string | undefined, name: string): string {
 }
 
 /**
- * Process-once per-worker clone (JEST_WORKER_ID / VITEST_POOL_ID / pid by default).
+ * Process-once clone (unique default name; see {@link defaultCloneWorkerName}).
  * Uses `cloneFromTemplateIfNeeded` (same skip policy as `acquireIfNeeded`) with `setEnv: true`.
  * First call wins for `root`/`name`; conflicting later calls throw.
+ *
+ * Prefer `setupFilesAfterEnv` + `beforeAll` (Jest) or a once-loaded Vitest setup file
+ * so the memo sticks. Plain Jest `setupFiles` reloads the module per file — unique
+ * default names avoid "database already exists"; you still get one clone per file.
  */
 export function cloneWorkerDatabase(options: CloneWorkerDatabaseOptions = {}): Promise<void> {
   const name = resolveWorkerName(options);
