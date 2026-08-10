@@ -20,8 +20,11 @@ export type {
  * module.exports = createGlobalSetup({ migrate: async ({ databaseUrl }) => {} });
  *
  * // jest.config.cjs
+ * // When .env has a real TEST_DATABASE_URL, set once here (inherits to workers):
+ * // process.env.CEDAR_PG_FORCE = "1";
  * globalSetup: "<rootDir>/jest.cedar-global.cjs",
  * globalTeardown: require.resolve("@cedarjs/pg/jest-teardown"),
+ * // Prefer setupFilesAfterEnv + beforeAll; setupFiles also works (memo is process-scoped).
  * setupFilesAfterEnv: ["<rootDir>/jest.cedar-worker.cjs"],
  *
  * // jest.cedar-worker.cjs

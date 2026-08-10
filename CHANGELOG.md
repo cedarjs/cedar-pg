@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- TEMPLATE `cloneWorkerDatabase`: process-once memo lives on `globalThis` so Jest `setupFiles` (module reload per file) no longer re-clones and hits `database already exists` on `_c_<workerId>`
+
 ## 0.2.0-alpha.0
 
 Breaking-ish alpha cut (still `alpha` dist-tag). Public lifecycle verb is now **`acquire`** (was `ensure`).

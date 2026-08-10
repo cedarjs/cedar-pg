@@ -47,6 +47,8 @@ async function withMockedCore<T>(
   },
   run: () => Promise<T>,
 ): Promise<T> {
+  const cloneWorkerMemo = Symbol.for("@cedarjs/pg/cloneWorkerDatabase");
+  delete (globalThis as typeof globalThis & { [cloneWorkerMemo]?: unknown })[cloneWorkerMemo];
   vi.resetModules();
   vi.doMock("../src/core/lifecycle.ts", async () => {
     const actual = await vi.importActual<typeof import("../src/core/lifecycle.ts")>(
@@ -74,6 +76,7 @@ async function withMockedCore<T>(
     vi.doUnmock("../src/core/lifecycle.ts");
     vi.doUnmock("../src/core/template.ts");
     vi.resetModules();
+    delete (globalThis as typeof globalThis & { [cloneWorkerMemo]?: unknown })[cloneWorkerMemo];
   }
 }
 
@@ -189,6 +192,33 @@ test("cloneWorkerDatabase clones via cloneFromTemplateIfNeeded with setEnv true"
         name: "3",
         setEnv: true,
       });
+    });
+  } finally {
+    if (prevJest === undefined) delete process.env.JEST_WORKER_ID;
+    else process.env.JEST_WORKER_ID = prevJest;
+    if (prevCedar === undefined) delete process.env.CEDAR_PG;
+    else process.env.CEDAR_PG = prevCedar;
+  }
+});
+
+test("cloneWorkerDatabase memo survives module reload (Jest setupFiles)", async () => {
+  const prevJest = process.env.JEST_WORKER_ID;
+  const prevCedar = process.env.CEDAR_PG;
+  process.env.JEST_WORKER_ID = "1";
+  delete process.env.CEDAR_PG;
+
+  const cloneFromTemplateIfNeeded = vi.fn(async () =>
+    clonedWorker({ databaseName: "cpg_tmpl_c_1" }),
+  );
+
+  try {
+    await withMockedCore({ cloneFromTemplateIfNeeded }, async () => {
+      const first = await import("../src/adapters/template-mode.ts");
+      await first.cloneWorkerDatabase({ root: "/tmp/wt" });
+      vi.resetModules();
+      const second = await import("../src/adapters/template-mode.ts");
+      await second.cloneWorkerDatabase({ root: "/tmp/wt" });
+      expect(cloneFromTemplateIfNeeded).toHaveBeenCalledTimes(1);
     });
   } finally {
     if (prevJest === undefined) delete process.env.JEST_WORKER_ID;

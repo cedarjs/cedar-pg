@@ -69,8 +69,27 @@ export type CloneWorkerDatabaseOptions = {
   name?: string;
 };
 
-let workerOnce: Promise<void> | undefined;
-let workerOnceKey: string | undefined;
+/** Survives Jest `setupFiles` module reloads (module-scoped `let` does not). */
+const CLONE_WORKER_MEMO = Symbol.for("@cedarjs/pg/cloneWorkerDatabase");
+
+type CloneWorkerMemo = {
+  promise: Promise<void>;
+  key: string;
+};
+
+type GlobalWithCloneWorkerMemo = typeof globalThis & {
+  [CLONE_WORKER_MEMO]?: CloneWorkerMemo;
+};
+
+function readCloneWorkerMemo(): CloneWorkerMemo | undefined {
+  return (globalThis as GlobalWithCloneWorkerMemo)[CLONE_WORKER_MEMO];
+}
+
+function writeCloneWorkerMemo(memo: CloneWorkerMemo | undefined): void {
+  const g = globalThis as GlobalWithCloneWorkerMemo;
+  if (memo === undefined) delete g[CLONE_WORKER_MEMO];
+  else g[CLONE_WORKER_MEMO] = memo;
+}
 
 function resolveWorkerName(options: CloneWorkerDatabaseOptions): string {
   return (
@@ -86,21 +105,24 @@ function workerOptionsKey(root: string | undefined, name: string): string {
  * Process-once per-worker clone (JEST_WORKER_ID / VITEST_POOL_ID / pid by default).
  * Uses `cloneFromTemplateIfNeeded` (same skip policy as `acquireIfNeeded`) with `setEnv: true`.
  * First call wins for `root`/`name`; conflicting later calls throw.
+ *
+ * Memo lives on `globalThis` so Jest `setupFiles` (module reload per file) still
+ * shares one clone per worker. `setupFilesAfterEnv` + `beforeAll` also works.
  */
 export function cloneWorkerDatabase(options: CloneWorkerDatabaseOptions = {}): Promise<void> {
   const name = resolveWorkerName(options);
   const key = workerOptionsKey(options.root, name);
-  if (workerOnce) {
-    if (workerOnceKey !== key) {
+  const existing = readCloneWorkerMemo();
+  if (existing) {
+    if (existing.key !== key) {
       throw new Error(
         `cloneWorkerDatabase already started with different root/name ` +
-          `(first: ${JSON.stringify(workerOnceKey)}, now: ${JSON.stringify(key)})`,
+          `(first: ${JSON.stringify(existing.key)}, now: ${JSON.stringify(key)})`,
       );
     }
-    return workerOnce;
+    return existing.promise;
   }
-  workerOnceKey = key;
-  workerOnce = (async () => {
+  const promise = (async () => {
     await cloneFromTemplateIfNeeded({
       root: options.root,
       mode: "test",
@@ -108,9 +130,9 @@ export function cloneWorkerDatabase(options: CloneWorkerDatabaseOptions = {}): P
       setEnv: true,
     });
   })().catch((err) => {
-    workerOnce = undefined;
-    workerOnceKey = undefined;
+    writeCloneWorkerMemo(undefined);
     throw err;
   });
-  return workerOnce;
+  writeCloneWorkerMemo({ promise, key });
+  return promise;
 }
