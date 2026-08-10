@@ -47,6 +47,8 @@ async function withMockedCore<T>(
   },
   run: () => Promise<T>,
 ): Promise<T> {
+  const cloneWorkerMemo = Symbol.for("@cedarjs/pg/cloneWorkerDatabase");
+  delete (globalThis as typeof globalThis & { [cloneWorkerMemo]?: unknown })[cloneWorkerMemo];
   vi.resetModules();
   vi.doMock("../src/core/lifecycle.ts", async () => {
     const actual = await vi.importActual<typeof import("../src/core/lifecycle.ts")>(
@@ -74,6 +76,7 @@ async function withMockedCore<T>(
     vi.doUnmock("../src/core/lifecycle.ts");
     vi.doUnmock("../src/core/template.ts");
     vi.resetModules();
+    delete (globalThis as typeof globalThis & { [cloneWorkerMemo]?: unknown })[cloneWorkerMemo];
   }
 }
 
@@ -171,16 +174,6 @@ test("setupTemplateMode skips migrate/mark when acquire is skipped", async () =>
   });
 });
 
-test("defaultCloneWorkerName is unique across identical timestamps (setupFiles-safe)", async () => {
-  const { defaultCloneWorkerName } = await import("../src/adapters/template-mode.ts");
-  const a = defaultCloneWorkerName({ JEST_WORKER_ID: "3" }, 42, 1_700_000_000_000, "aaa111");
-  const b = defaultCloneWorkerName({ JEST_WORKER_ID: "3" }, 42, 1_700_000_000_000, "bbb222");
-  expect(a).toBe(`3_42_${(1_700_000_000_000).toString(36)}_aaa111`);
-  expect(b).toBe(`3_42_${(1_700_000_000_000).toString(36)}_bbb222`);
-  expect(a).not.toBe(b);
-  expect(defaultCloneWorkerName({}, 7, 99, "ccc333")).toBe(`w_7_${(99).toString(36)}_ccc333`);
-});
-
 test("cloneWorkerDatabase clones via cloneFromTemplateIfNeeded with setEnv true", async () => {
   const prevJest = process.env.JEST_WORKER_ID;
   const prevCedar = process.env.CEDAR_PG;
@@ -192,11 +185,11 @@ test("cloneWorkerDatabase clones via cloneFromTemplateIfNeeded with setEnv true"
   try {
     await withMockedCore({ cloneFromTemplateIfNeeded }, async () => {
       const { cloneWorkerDatabase } = await import("../src/adapters/template-mode.ts");
-      await cloneWorkerDatabase({ root: "/tmp/wt", name: "explicit" });
+      await cloneWorkerDatabase({ root: "/tmp/wt" });
       expect(cloneFromTemplateIfNeeded).toHaveBeenCalledWith({
         root: "/tmp/wt",
         mode: "test",
-        name: "explicit",
+        name: "3",
         setEnv: true,
       });
     });
@@ -208,26 +201,24 @@ test("cloneWorkerDatabase clones via cloneFromTemplateIfNeeded with setEnv true"
   }
 });
 
-test("cloneWorkerDatabase default name includes worker, pid, time, and entropy", async () => {
+test("cloneWorkerDatabase memo survives module reload (Jest setupFiles)", async () => {
   const prevJest = process.env.JEST_WORKER_ID;
   const prevCedar = process.env.CEDAR_PG;
-  process.env.JEST_WORKER_ID = "3";
+  process.env.JEST_WORKER_ID = "1";
   delete process.env.CEDAR_PG;
 
-  const cloneFromTemplateIfNeeded = vi.fn(async () => clonedWorker());
+  const cloneFromTemplateIfNeeded = vi.fn(async () =>
+    clonedWorker({ databaseName: "cpg_tmpl_c_1" }),
+  );
 
   try {
     await withMockedCore({ cloneFromTemplateIfNeeded }, async () => {
-      const { cloneWorkerDatabase } = await import("../src/adapters/template-mode.ts");
-      await cloneWorkerDatabase({ root: "/tmp/wt" });
-      expect(cloneFromTemplateIfNeeded).toHaveBeenCalledWith(
-        expect.objectContaining({
-          root: "/tmp/wt",
-          mode: "test",
-          setEnv: true,
-          name: expect.stringMatching(new RegExp(`^3_${process.pid}_[0-9a-z]+_[0-9a-f]{6}$`)),
-        }),
-      );
+      const first = await import("../src/adapters/template-mode.ts");
+      await first.cloneWorkerDatabase({ root: "/tmp/wt" });
+      vi.resetModules();
+      const second = await import("../src/adapters/template-mode.ts");
+      await second.cloneWorkerDatabase({ root: "/tmp/wt" });
+      expect(cloneFromTemplateIfNeeded).toHaveBeenCalledTimes(1);
     });
   } finally {
     if (prevJest === undefined) delete process.env.JEST_WORKER_ID;
@@ -237,31 +228,10 @@ test("cloneWorkerDatabase default name includes worker, pid, time, and entropy",
   }
 });
 
-test("cloneWorkerDatabase unnamed calls reuse retained default name", async () => {
-  const prevCedar = process.env.CEDAR_PG;
-  delete process.env.CEDAR_PG;
-
-  const cloneFromTemplateIfNeeded = vi.fn(async () =>
-    clonedWorker({ databaseName: "cpg_tmpl_c_1" }),
-  );
-
-  try {
-    await withMockedCore({ cloneFromTemplateIfNeeded }, async () => {
-      const { cloneWorkerDatabase } = await import("../src/adapters/template-mode.ts");
-      await cloneWorkerDatabase({ root: "/tmp/wt" });
-      // Different wall time must not change the retained default key.
-      await new Promise((r) => setTimeout(r, 2));
-      await cloneWorkerDatabase({ root: "/tmp/wt" });
-      expect(cloneFromTemplateIfNeeded).toHaveBeenCalledTimes(1);
-    });
-  } finally {
-    if (prevCedar === undefined) delete process.env.CEDAR_PG;
-    else process.env.CEDAR_PG = prevCedar;
-  }
-});
-
 test("cloneWorkerDatabase is idempotent per process", async () => {
+  const prevJest = process.env.JEST_WORKER_ID;
   const prevCedar = process.env.CEDAR_PG;
+  process.env.JEST_WORKER_ID = "1";
   delete process.env.CEDAR_PG;
 
   const cloneFromTemplateIfNeeded = vi.fn(async () =>
@@ -271,18 +241,22 @@ test("cloneWorkerDatabase is idempotent per process", async () => {
   try {
     await withMockedCore({ cloneFromTemplateIfNeeded }, async () => {
       const { cloneWorkerDatabase } = await import("../src/adapters/template-mode.ts");
-      await cloneWorkerDatabase({ name: "stable" });
-      await cloneWorkerDatabase({ name: "stable" });
+      await cloneWorkerDatabase();
+      await cloneWorkerDatabase();
       expect(cloneFromTemplateIfNeeded).toHaveBeenCalledTimes(1);
     });
   } finally {
+    if (prevJest === undefined) delete process.env.JEST_WORKER_ID;
+    else process.env.JEST_WORKER_ID = prevJest;
     if (prevCedar === undefined) delete process.env.CEDAR_PG;
     else process.env.CEDAR_PG = prevCedar;
   }
 });
 
 test("cloneWorkerDatabase rejects conflicting root/name after first call", async () => {
+  const prevJest = process.env.JEST_WORKER_ID;
   const prevCedar = process.env.CEDAR_PG;
+  process.env.JEST_WORKER_ID = "1";
   delete process.env.CEDAR_PG;
 
   const cloneFromTemplateIfNeeded = vi.fn(async () =>
@@ -292,13 +266,15 @@ test("cloneWorkerDatabase rejects conflicting root/name after first call", async
   try {
     await withMockedCore({ cloneFromTemplateIfNeeded }, async () => {
       const { cloneWorkerDatabase } = await import("../src/adapters/template-mode.ts");
-      await cloneWorkerDatabase({ root: "/tmp/a", name: "n" });
-      expect(() => cloneWorkerDatabase({ root: "/tmp/b", name: "n" })).toThrow(
+      await cloneWorkerDatabase({ root: "/tmp/a" });
+      expect(() => cloneWorkerDatabase({ root: "/tmp/b" })).toThrow(
         /already started with different root\/name/,
       );
       expect(cloneFromTemplateIfNeeded).toHaveBeenCalledTimes(1);
     });
   } finally {
+    if (prevJest === undefined) delete process.env.JEST_WORKER_ID;
+    else process.env.JEST_WORKER_ID = prevJest;
     if (prevCedar === undefined) delete process.env.CEDAR_PG;
     else process.env.CEDAR_PG = prevCedar;
   }

@@ -24,8 +24,7 @@ export type {
  * // process.env.CEDAR_PG_FORCE = "1";
  * globalSetup: "<rootDir>/jest.cedar-global.cjs",
  * globalTeardown: require.resolve("@cedarjs/pg/jest-teardown"),
- * // Prefer setupFilesAfterEnv so cloneWorkerDatabase's process memo sticks.
- * // Plain setupFiles reloads per file — default unique clone names still work.
+ * // Prefer setupFilesAfterEnv + beforeAll; setupFiles also works (memo is process-scoped).
  * setupFilesAfterEnv: ["<rootDir>/jest.cedar-worker.cjs"],
  *
  * // jest.cedar-worker.cjs
