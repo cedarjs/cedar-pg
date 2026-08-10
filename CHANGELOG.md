@@ -5,6 +5,7 @@
 ### Fixed
 
 - TEMPLATE `cloneWorkerDatabase`: default clone name is unique per call (`<worker>_<pid>_<time>`) so Jest `setupFiles` (module reload per file) no longer hits `database already exists` on `_c_<workerId>`
+- Ephemeral host: prune stale `/dev/shm/cedar-pg-*` / `pgserve-*` / `PostgreSQL.*` when the recipe port is dead; append remount/cleanup hints on Disk quota / ENOSPC / 53100
 
 ## 0.2.0-alpha.0
 
