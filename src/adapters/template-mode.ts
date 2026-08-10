@@ -65,31 +65,36 @@ export async function setupTemplateMode(
 
 export type CloneWorkerDatabaseOptions = {
   root?: string;
-  /**
-   * Clone suffix. Prefer omitting this: the default is unique per call
-   * (`<worker|w>_<pid>_<base36 time>`) so Jest `setupFiles` (module reload per
-   * file) does not collide on `CREATE DATABASE …_c_<workerId>`.
-   * Process-once memo still dedupes within a single module load
-   * (`setupFilesAfterEnv` + `beforeAll`, or Vitest `setupFiles` with top-level await).
-   */
+  /** Clone suffix; defaults to JEST_WORKER_ID / VITEST_POOL_ID / pid. */
   name?: string;
 };
 
-let workerOnce: Promise<void> | undefined;
-let workerOnceKey: string | undefined;
+/** Survives Jest `setupFiles` module reloads (module-scoped `let` does not). */
+const CLONE_WORKER_MEMO = Symbol.for("@cedarjs/pg/cloneWorkerDatabase");
 
-/** Unique clone suffix; exported for tests. */
-export function defaultCloneWorkerName(
-  env: NodeJS.ProcessEnv = process.env,
-  pid: number = process.pid,
-  now: number = Date.now(),
-): string {
-  const worker = env.JEST_WORKER_ID ?? env.VITEST_POOL_ID ?? "w";
-  return `${worker}_${pid}_${now.toString(36)}`;
+type CloneWorkerMemo = {
+  promise: Promise<void>;
+  key: string;
+};
+
+type GlobalWithCloneWorkerMemo = typeof globalThis & {
+  [CLONE_WORKER_MEMO]?: CloneWorkerMemo;
+};
+
+function readCloneWorkerMemo(): CloneWorkerMemo | undefined {
+  return (globalThis as GlobalWithCloneWorkerMemo)[CLONE_WORKER_MEMO];
+}
+
+function writeCloneWorkerMemo(memo: CloneWorkerMemo | undefined): void {
+  const g = globalThis as GlobalWithCloneWorkerMemo;
+  if (memo === undefined) delete g[CLONE_WORKER_MEMO];
+  else g[CLONE_WORKER_MEMO] = memo;
 }
 
 function resolveWorkerName(options: CloneWorkerDatabaseOptions): string {
-  return options.name ?? defaultCloneWorkerName();
+  return (
+    options.name ?? process.env.JEST_WORKER_ID ?? process.env.VITEST_POOL_ID ?? String(process.pid)
+  );
 }
 
 function workerOptionsKey(root: string | undefined, name: string): string {
@@ -97,28 +102,27 @@ function workerOptionsKey(root: string | undefined, name: string): string {
 }
 
 /**
- * Process-once clone (unique default name; see {@link defaultCloneWorkerName}).
+ * Process-once per-worker clone (JEST_WORKER_ID / VITEST_POOL_ID / pid by default).
  * Uses `cloneFromTemplateIfNeeded` (same skip policy as `acquireIfNeeded`) with `setEnv: true`.
  * First call wins for `root`/`name`; conflicting later calls throw.
  *
- * Prefer `setupFilesAfterEnv` + `beforeAll` (Jest) or a once-loaded Vitest setup file
- * so the memo sticks. Plain Jest `setupFiles` reloads the module per file — unique
- * default names avoid "database already exists"; you still get one clone per file.
+ * Memo lives on `globalThis` so Jest `setupFiles` (module reload per file) still
+ * shares one clone per worker. `setupFilesAfterEnv` + `beforeAll` also works.
  */
 export function cloneWorkerDatabase(options: CloneWorkerDatabaseOptions = {}): Promise<void> {
   const name = resolveWorkerName(options);
   const key = workerOptionsKey(options.root, name);
-  if (workerOnce) {
-    if (workerOnceKey !== key) {
+  const existing = readCloneWorkerMemo();
+  if (existing) {
+    if (existing.key !== key) {
       throw new Error(
         `cloneWorkerDatabase already started with different root/name ` +
-          `(first: ${JSON.stringify(workerOnceKey)}, now: ${JSON.stringify(key)})`,
+          `(first: ${JSON.stringify(existing.key)}, now: ${JSON.stringify(key)})`,
       );
     }
-    return workerOnce;
+    return existing.promise;
   }
-  workerOnceKey = key;
-  workerOnce = (async () => {
+  const promise = (async () => {
     await cloneFromTemplateIfNeeded({
       root: options.root,
       mode: "test",
@@ -126,9 +130,9 @@ export function cloneWorkerDatabase(options: CloneWorkerDatabaseOptions = {}): P
       setEnv: true,
     });
   })().catch((err) => {
-    workerOnce = undefined;
-    workerOnceKey = undefined;
+    writeCloneWorkerMemo(undefined);
     throw err;
   });
-  return workerOnce;
+  writeCloneWorkerMemo({ promise, key });
+  return promise;
 }
