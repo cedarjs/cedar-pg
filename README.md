@@ -292,7 +292,8 @@ Ephemeral recipe (not configurable via cedar-pg):
 - otherwise → disk `DIR` under the OS temp dir (still owned, no pm2)
 - Ready when TCP accepts on the recipe port (not merely `autopg status` after install)
 - Before cold-start, if the recipe port is **not** live, cedar-pg prunes leftover
-  `/dev/shm/cedar-pg-*`, `pgserve-*`, and `PostgreSQL.*` (OOM-killed runs filling tmpfs)
+  `/dev/shm/cedar-pg-*`, `pgserve-*`, and `PostgreSQL.*` (OOM-killed runs filling tmpfs).
+  Safe on isolated CI VMs; on shared self-hosted runners another job’s leftovers could match those globs.
 
 If a host is already live, cedar-pg attaches and does not start another. The **CI job owns** ephemeral postmaster lifetime (runner teardown / `/dev/shm`); there is no cedar-pg host dispose API.
 
@@ -314,7 +315,8 @@ See [`.github/actions/setup-autopg`](.github/actions/setup-autopg/README.md) for
 
 The action runs `scripts/ci-install-autopg.sh` under the hood. For published-package consumers under `CI=true` without the Action, set `CEDAR_PG_INSTALL_AUTOPG=1` so `postinstall` runs that same script (not upstream `install.sh`) — that flag alone is not enough when the package manager disables lifecycle scripts (`--ignore-scripts`, `YARN_ENABLE_SCRIPTS=false`, etc.). Prefer this Action, or bake the binary into the image.
 
-**Yarn Berry / ignore-scripts consumers** (copy-paste when you cannot use the Action):
+**Yarn Berry / ignore-scripts consumers** (copy-paste when you cannot use the Action).
+Requires a real `node_modules` tree (`nodeLinker: node-modules` / `pnpm`); default Yarn PnP has no `node_modules/@cedarjs/pg/…` path — resolve via `yarn node` / `require.resolve` instead, or prefer the Action.
 
 ```yaml
 - name: Ensure autopg binary
@@ -352,12 +354,14 @@ process.env.CEDAR_PG_FORCE = "1";
 module.exports = {
   globalSetup: "<rootDir>/jest.cedar-global.cjs",
   globalTeardown: require.resolve("@cedarjs/pg/jest-teardown"),
-  // Prefer setupFilesAfterEnv so cloneWorkerDatabase's process memo sticks.
-  // Plain setupFiles reloads the module per file — default unique clone names still work.
+  // Prefer setupFilesAfterEnv so you can use beforeAll (Jest globals).
+  // Both setupFiles and setupFilesAfterEnv run once per test file; the module-level
+  // memo only dedupes within that load. Default unique clone names still work if
+  // the module reloads (one clone per file).
   setupFilesAfterEnv: ["<rootDir>/jest.cedar-worker.cjs"],
 };
 
-// jest.cedar-worker.cjs — once per worker process
+// jest.cedar-worker.cjs — runs once per test file (beforeAll); memo is per module load
 const { cloneWorkerDatabase } = require("@cedarjs/pg/jest/template");
 beforeAll(() => cloneWorkerDatabase());
 ```
@@ -438,9 +442,9 @@ Worker adapters call `cloneFromTemplateIfNeeded` (shared skip policy via `runIfN
 
 | Symptom                                                                                 | Fix                                                                                                                                                                                                                                     |
 | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `database already exists: …_c_<workerId>` in Jest                                       | Use current `@cedarjs/pg` (unique default clone names), or call `cloneWorkerDatabase` from `setupFilesAfterEnv` + `beforeAll` so the process memo sticks. Avoid bare `JEST_WORKER_ID` as an explicit `name` with plain `setupFiles`.    |
+| `database already exists: …_c_<workerId>` in Jest                                       | Use current `@cedarjs/pg` (unique default clone names). Prefer `setupFilesAfterEnv` + `beforeAll` (Jest globals). Both hooks run per test file — memo is per module load, not process-wide. Avoid bare `JEST_WORKER_ID` as an explicit `name`. |
 | Acquire skipped; tests hit shared / stale Postgres                                      | Real `.env` `TEST_DATABASE_URL` / `DATABASE_URL` trips the escape hatch. Set `CEDAR_PG_FORCE=1` once in `jest.config.js`, or `force: true` / `cedarpg run --force`.                                                                     |
-| `Disk quota exceeded` / `No space left on device` / Postgres `53100` on ephemeral start | Enlarge `/dev/shm` (`sudo mount -o remount,size=6G /dev/shm`). Clear leftovers: `rm -rf /dev/shm/cedar-pg-* /dev/shm/pgserve-* /dev/shm/PostgreSQL.*` (your test data only). Cold-start also prunes these when the recipe port is dead. |
-| `autopg: command not found` in CI with Yarn `YARN_ENABLE_SCRIPTS=false`                 | `CEDAR_PG_INSTALL_AUTOPG=1` is not enough when lifecycle scripts are off. Run `bash node_modules/@cedarjs/pg/scripts/ci-install-autopg.sh` and put `~/.local/bin` on `PATH` (or use `setup-autopg`).                                    |
+| `Disk quota exceeded` / `No space left on device` / Postgres `53100` on ephemeral start | Enlarge `/dev/shm` (`sudo mount -o remount,size=6G /dev/shm`). On **isolated** runners only: `rm -rf /dev/shm/cedar-pg-* /dev/shm/pgserve-* /dev/shm/PostgreSQL.*`. Cold-start also prunes these when the recipe port is dead.              |
+| `autopg: command not found` in CI with Yarn `YARN_ENABLE_SCRIPTS=false`                 | `CEDAR_PG_INSTALL_AUTOPG=1` is not enough when lifecycle scripts are off. With `nodeLinker: node-modules`, run `bash node_modules/@cedarjs/pg/scripts/ci-install-autopg.sh` and put `~/.local/bin` on `PATH` (or use `setup-autopg`). PnP: resolve the script path via Yarn, or prefer the Action. |
 | Nx child still uses `.env` `DATABASE_URL`                                               | `dependsOn` does not forward acquire env. Wrap with `cedarpg run --mode=dev --force -- <cmd>`, or `loadDevEnv({ overwrite: true })`.                                                                                                    |
 | Role/DB errors under parallel Nx targets                                                | Do not run concurrent `acquire` / `run` on the same worktree. One `db:ready`, then `run` wrappers.                                                                                                                                      |
