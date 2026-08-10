@@ -1,5 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, statfsSync } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,6 +36,19 @@ const EPHEMERAL_PORT = 55432;
 
 const OWNED_POSTMASTER_READY_MS = 30_000;
 const OWNED_POSTMASTER_POLL_MS = 200;
+
+/** Soft minimum free bytes on /dev/shm before RAM-backed ephemeral start (warns only). */
+export const EPHEMERAL_SHM_MIN_FREE_BYTES = 512 * 1024 * 1024;
+
+/**
+ * Hint when ephemeral `--ram` initdb fails for space / leftover dirs under `/dev/shm`.
+ * Cloud VMs often ship with a tiny default tmpfs (e.g. 64MB).
+ */
+export const EPHEMERAL_SHM_HINT =
+  "Ephemeral autopg uses /dev/shm with --ram. If initdb fails with Disk quota / No space (Postgres 53100):\n" +
+  "  1. Enlarge tmpfs (cloud VMs often default to ~64MB): sudo mount -o remount,size=6G /dev/shm\n" +
+  "  2. Clear leftovers from OOM-killed runs (your test data only):\n" +
+  "     rm -rf /dev/shm/cedar-pg-* /dev/shm/pgserve-* /dev/shm/PostgreSQL.*";
 
 /**
  * Resolve whether to start an owned ephemeral postmaster or use local pm2 install.
@@ -92,16 +105,85 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function runInstall(bin: string, args: string[]): void {
+/** True when stderr/stdout looks like a /dev/shm quota or ENOSPC failure. */
+export function looksLikeShmSpaceError(text: string): boolean {
+  return /Disk quota exceeded|No space left on device|ENOSPC|\b53100\b/i.test(text);
+}
+
+export function formatHostStartError(detail: string, useRamShm: boolean): string {
+  const hint = useRamShm && looksLikeShmSpaceError(detail) ? `\n${EPHEMERAL_SHM_HINT}` : "";
+  return `Failed to start autopg host.\n${detail}\n${INSTALL_HINT}${hint}`;
+}
+
+/**
+ * Remove leftover ephemeral data dirs under `/dev/shm` (and the recipe dataDir)
+ * when the recipe port is not live. Safe for OOM-killed CI/cloud runs that leave
+ * `cedar-pg-*` / `pgserve-*` / `PostgreSQL.*` filling tmpfs.
+ *
+ * Does nothing when `portLive` is true (another host owns the port).
+ */
+export function pruneStaleEphemeralDataDirs(opts: {
+  dataDir: string;
+  /** Parent of RAM dirs; default `/dev/shm` when it exists. */
+  shmRoot?: string;
+  /** When true, skip all deletes. */
+  portLive: boolean;
+}): string[] {
+  if (opts.portLive) return [];
+
+  const removed: string[] = [];
+  const tryRm = (path: string) => {
+    if (!existsSync(path)) return;
+    try {
+      rmSync(path, { recursive: true, force: true });
+      removed.push(path);
+    } catch {
+      // best-effort: next initdb will surface a clearer error
+    }
+  };
+
+  tryRm(opts.dataDir);
+
+  const shmRoot = opts.shmRoot ?? (existsSync("/dev/shm") ? "/dev/shm" : undefined);
+  if (!shmRoot) return removed;
+
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(shmRoot);
+  } catch {
+    return removed;
+  }
+
+  for (const name of entries) {
+    if (
+      name.startsWith("cedar-pg-") ||
+      name.startsWith("pgserve-") ||
+      name.startsWith("PostgreSQL.")
+    ) {
+      tryRm(join(shmRoot, name));
+    }
+  }
+  return removed;
+}
+
+/** Free bytes on `path`, or `null` if unavailable. */
+export function freeBytesOn(path: string): number | null {
+  try {
+    const s = statfsSync(path);
+    return Number(s.bavail) * Number(s.bsize);
+  } catch {
+    return null;
+  }
+}
+
+function runInstall(bin: string, args: string[], useRamShm: boolean): void {
   const install = spawnSync(bin, args, {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (install.status !== 0) {
-    throw new Error(
-      `Failed to start autopg host (exit ${install.status}).\n` +
-        `${install.stderr || install.stdout || ""}\n${INSTALL_HINT}`,
-    );
+    const detail = `exit ${install.status}\n${install.stderr || install.stdout || ""}`.trim();
+    throw new Error(formatHostStartError(detail, useRamShm));
   }
 }
 
@@ -182,8 +264,27 @@ export async function waitForOwnedPostmaster(opts: WaitForOwnedPostmasterOptions
  */
 async function startEphemeralHost(bin: string): Promise<AutopgDiscovery> {
   const recipe = ephemeralHostRecipe();
+  const useRamShm = recipe.postmasterArgs.includes("--ram");
+  const portLive = await canConnect(recipe.port);
+
+  pruneStaleEphemeralDataDirs({
+    dataDir: recipe.dataDir,
+    portLive,
+  });
+
+  if (useRamShm && !portLive) {
+    const free = freeBytesOn("/dev/shm");
+    if (free != null && free < EPHEMERAL_SHM_MIN_FREE_BYTES) {
+      process.stderr.write(
+        `[cedar-pg] warning: /dev/shm has ~${Math.round(free / (1024 * 1024))}MB free ` +
+          `(recommend ≥${Math.round(EPHEMERAL_SHM_MIN_FREE_BYTES / (1024 * 1024))}MB for --ram).\n` +
+          `${EPHEMERAL_SHM_HINT}\n`,
+      );
+    }
+  }
+
   mkdirSync(recipe.dataDir, { recursive: true });
-  runInstall(bin, recipe.installArgs);
+  runInstall(bin, recipe.installArgs, useRamShm);
 
   const state: {
     exit: { code: number | null; signal: NodeJS.Signals | null } | null;
@@ -208,13 +309,18 @@ async function startEphemeralHost(bin: string): Promise<AutopgDiscovery> {
       failure: () => {
         if (state.spawnError) {
           return new Error(
-            `Failed to spawn autopg postmaster.\n${state.spawnError.message}\n${INSTALL_HINT}`,
+            formatHostStartError(
+              `Failed to spawn autopg postmaster.\n${state.spawnError.message}`,
+              useRamShm,
+            ),
           );
         }
         if (state.exit) {
           return new Error(
-            `autopg postmaster exited before ready (code=${state.exit.code}, signal=${state.exit.signal}).\n` +
-              INSTALL_HINT,
+            formatHostStartError(
+              `autopg postmaster exited before ready (code=${state.exit.code}, signal=${state.exit.signal}).`,
+              useRamShm,
+            ),
           );
         }
         return null;
@@ -238,6 +344,7 @@ async function startEphemeralHost(bin: string): Promise<AutopgDiscovery> {
  *   or opinionated ephemeral (`--no-pm2 --no-ui` + detached postmaster).
  * - CI job owns ephemeral postmaster lifetime on success (no cedar-pg host dispose).
  * - Failed ephemeral start kills the spawned child so ensure is atomic for the caller.
+ * - Before ephemeral cold-start, prunes stale `/dev/shm` leftovers when the recipe port is dead.
  */
 export async function ensureHostRunning(bin = requireAutopgBin()): Promise<AutopgDiscovery> {
   try {
@@ -250,6 +357,6 @@ export async function ensureHostRunning(bin = requireAutopgBin()): Promise<Autop
     return startEphemeralHost(bin);
   }
 
-  runInstall(bin, ["install"]);
+  runInstall(bin, ["install"], false);
   return discoverHost(bin);
 }

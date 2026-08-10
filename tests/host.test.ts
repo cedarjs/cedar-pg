@@ -1,8 +1,15 @@
 import { expect, test } from "vite-plus/test";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { adminUrlFor } from "../src/providers/autopg.ts";
 import {
   discoveryFromRecipe,
   ephemeralHostRecipe,
+  EPHEMERAL_SHM_HINT,
+  formatHostStartError,
+  looksLikeShmSpaceError,
+  pruneStaleEphemeralDataDirs,
   resolveEphemeralHostPolicy,
   waitForOwnedPostmaster,
 } from "../src/providers/host.ts";
@@ -132,4 +139,63 @@ test("waitForOwnedPostmaster times out when TCP never accepts", async () => {
       canConnect: async () => false,
     }),
   ).rejects.toThrow(/Timed out waiting for autopg host after 5ms/);
+});
+
+test("looksLikeShmSpaceError matches quota / ENOSPC / 53100", () => {
+  expect(looksLikeShmSpaceError("ERROR: Disk quota exceeded")).toBe(true);
+  expect(looksLikeShmSpaceError("No space left on device")).toBe(true);
+  expect(looksLikeShmSpaceError("could not write ... ENOSPC")).toBe(true);
+  expect(looksLikeShmSpaceError("SQLSTATE 53100")).toBe(true);
+  expect(looksLikeShmSpaceError("permission denied")).toBe(false);
+});
+
+test("formatHostStartError appends shm hint for RAM quota failures", () => {
+  const msg = formatHostStartError("Disk quota exceeded during initdb", true);
+  expect(msg).toContain("Disk quota exceeded");
+  expect(msg).toContain(EPHEMERAL_SHM_HINT);
+  expect(formatHostStartError("permission denied", true)).not.toContain("Enlarge tmpfs");
+  expect(formatHostStartError("Disk quota exceeded", false)).not.toContain("Enlarge tmpfs");
+});
+
+test("pruneStaleEphemeralDataDirs removes leftovers when port is dead", () => {
+  const root = mkdtempSync(join(tmpdir(), "cedar-shm-"));
+  const dataDir = join(root, "cedar-pg-host");
+  const keep = join(root, "other-file");
+  mkdirSync(dataDir);
+  mkdirSync(join(root, "cedar-pg-9"));
+  mkdirSync(join(root, "pgserve-abc"));
+  mkdirSync(join(root, "PostgreSQL.12345"));
+  writeFileSync(keep, "x");
+
+  const removed = pruneStaleEphemeralDataDirs({
+    dataDir,
+    shmRoot: root,
+    portLive: false,
+  });
+
+  expect(removed.sort()).toEqual(
+    [
+      dataDir,
+      join(root, "cedar-pg-9"),
+      join(root, "pgserve-abc"),
+      join(root, "PostgreSQL.12345"),
+    ].sort(),
+  );
+  expect(existsSync(keep)).toBe(true);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("pruneStaleEphemeralDataDirs is a no-op when port is live", () => {
+  const root = mkdtempSync(join(tmpdir(), "cedar-shm-"));
+  const dataDir = join(root, "cedar-pg-host");
+  mkdirSync(dataDir);
+  expect(
+    pruneStaleEphemeralDataDirs({
+      dataDir,
+      shmRoot: root,
+      portLive: true,
+    }),
+  ).toEqual([]);
+  expect(existsSync(dataDir)).toBe(true);
+  rmSync(root, { recursive: true, force: true });
 });
