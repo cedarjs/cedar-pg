@@ -1,18 +1,17 @@
 /**
- * Nx targets. `dependsOn` does not forward acquire env (unlike Vite+ `env: [...]`);
- * wrap children with `cedarpg run`, or set `envFile` to `.cedarpg/<mode>.env`.
+ * Nx targets. `dependsOn` does not forward acquire env (unlike Vite+ `env: [...]`).
+ * Canonical shape: `createAcquireTask` / `db:ready`, then wrap children with
+ * `cedarpg run --mode=dev --force -- <cmd>`. Avoid concurrent acquire/run on the
+ * same worktree. Secondary: `envFile` → `.cedarpg/<mode>.env` (still loses to
+ * ambient `.env` without force/overwrite).
  *
  * ```json
  * {
  *   "targets": {
+ *     "db:ready": { "command": "tsx tools/db-ready.ts", "cache": false },
  *     "dev": {
- *       "command": "cedarpg run --mode=dev -- yarn tsx scripts/apiServer/dev.ts"
- *     },
- *     "db:acquire": { "command": "cedarpg acquire --mode=dev" },
- *     "serve": {
- *       "dependsOn": ["db:acquire"],
- *       "command": "node dist/server.js",
- *       "options": { "envFile": ".cedarpg/dev.env" }
+ *       "dependsOn": ["db:ready"],
+ *       "command": "cedarpg run --mode=dev --force -- yarn tsx scripts/apiServer/dev.ts"
  *     }
  *   }
  * }
