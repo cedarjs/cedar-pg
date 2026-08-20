@@ -100,7 +100,7 @@ cedarpg run --mode=test -- vitest run
 cedarpg dispose --mode=test
 cedarpg print-url --mode=dev
 cedarpg status --mode=dev          # lease name, port, DATABASE_URL, env path
-cedarpg studio --mode=dev          # open Prisma or Drizzle Kit Studio (--prisma / --drizzle)
+cedarpg studio --mode=dev          # Prisma/Drizzle Studio (--prisma / --drizzle; from cwd)
 cedarpg gc   # drop DBs whose worktree root is gone (uses ~/.cedarpg/registry)
 ```
 
@@ -200,11 +200,13 @@ status panel (TTY, non-CI). Vite CLI shortcuts (`key` then Enter; also listed un
 | Key | Action                                                                 |
 | --- | ---------------------------------------------------------------------- |
 | `d` | Reprint cedar-pg status (name, port, `DATABASE_URL`, env file)         |
-| `p` | Open Prisma Studio or Drizzle Kit Studio with the lease `DATABASE_URL` |
+| `s` | Open Prisma Studio or Drizzle Kit Studio with the lease `DATABASE_URL` |
 
-Options: `cedarPgDev({ mode, root, studio: "prisma" \| "drizzle" \| false })`. Studio auto-detects
-from the project (`prisma` preferred when both are present). Use `cedarpg status` / `cedarpg studio`
-for Nx and other non-Vite hosts.
+Options: `cedarPgDev({ mode, root, cwd, studio: "prisma" \| "drizzle" \| false })`. Studio walks
+from `cwd` (default Vite `config.root`) up to the worktree so an Nx `apps/…` package is found
+without moving the lease. `prisma` wins when both ORMs sit in the same package. Shortcuts need
+Vite 8 / vite-plus (`bindCLIShortcuts` merge; `s` avoids `--profile`'s `p`). Use `cedarpg status` /
+`cedarpg studio` for Nx and other non-Vite hosts.
 
 ## Vitest / Jest adapters
 

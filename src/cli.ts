@@ -6,7 +6,7 @@ import { resolveWorktreeIdentity } from "./core/worktree.ts";
 import { readLease } from "./core/lease.ts";
 import { formatDevStatus, resolveDevStatus } from "./core/status.ts";
 import type { DbMode } from "./core/naming.ts";
-import { detectStudio, openStudio, type StudioKind } from "./adapters/studio.ts";
+import { detectStudio, runStudio, type StudioKind } from "./adapters/studio.ts";
 
 function printHelp(): void {
   process.stdout.write(`${CLI_NAME}: worktree-isolated local Postgres (via autopg)
@@ -30,8 +30,9 @@ run:
   --force sets CEDAR_PG_FORCE (escape hatch); child env overwrite is always on.
 
 status / studio:
-  Read-only lease inspection (no acquire). studio opens Prisma or Drizzle Kit Studio
-  with DATABASE_URL from the lease (auto-detect; --prisma / --drizzle to force).
+  Read-only lease inspection (no acquire). studio runs Prisma or Drizzle Kit Studio
+  attached (stdio + exit code) with DATABASE_URL from the lease. Detects from cwd
+  up to the worktree (auto; --prisma / --drizzle to force).
 
 Env:
   AUTOPG_BIN       Path to autopg binary
@@ -272,18 +273,17 @@ async function main(): Promise<number> {
         }
         return 2;
       }
-      const studio = detectStudio({ root: status.root, prefer });
+      const studio = detectStudio({ root: status.root, cwd: process.cwd(), prefer });
       if (!studio) {
         process.stderr.write(
           `${CLI_NAME}: no Prisma or Drizzle Studio found (install prisma or drizzle-kit)\n`,
         );
         return 1;
       }
-      openStudio({ root: status.root, databaseUrl: status.databaseUrl, studio });
       process.stdout.write(
         `${CLI_NAME}: opening ${studio.kind} studio (${studio.command} ${studio.args.join(" ")})\n`,
       );
-      return 0;
+      return await runStudio({ databaseUrl: status.databaseUrl, studio });
     }
 
     process.stderr.write(`${CLI_NAME}: unknown command ${args.cmd}\n`);
