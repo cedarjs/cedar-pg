@@ -205,7 +205,8 @@ status panel (TTY, non-CI). Vite CLI shortcuts (`key` then Enter; also listed un
 Options: `cedarPgDev({ mode, root, cwd, studio: "prisma" \| "drizzle" \| false })`. Studio walks
 from `cwd` (default Vite `config.root`) up to the worktree so an Nx `apps/…` package is found
 without moving the lease. `prisma` wins when both ORMs sit in the same package. Shortcuts need
-Vite 8 / vite-plus (`bindCLIShortcuts` merge; `s` avoids `--profile`'s `p`). Use `cedarpg status` /
+Vite 8 / vite-plus (`bindCLIShortcuts` merge; `s` avoids `--profile`'s `p`). Vite 7 / Cedar skips
+shortcuts and still prints the listen panel. Use `cedarpg status` /
 `cedarpg studio` for Nx and other non-Vite hosts.
 
 ## Vitest / Jest adapters

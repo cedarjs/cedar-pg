@@ -1,9 +1,15 @@
 import type { ChildProcess } from "node:child_process";
 import type { Plugin, ViteDevServer } from "vite";
+import { version as viteVersion } from "vite";
 import { CLI_NAME } from "../core/constants.ts";
 import { formatDevStatus, resolveDevStatus } from "../core/status.ts";
 import type { DbMode } from "../core/naming.ts";
 import { detectStudio, openStudio, studioChildRunning, type StudioKind } from "./studio.ts";
+
+/** Vite 8 / vite-plus merge `customShortcuts`; Vite 7 (Cedar) overwrites the readline. */
+export function viteMergesCliShortcuts(version: string = viteVersion): boolean {
+  return Number.parseInt(version, 10) >= 8;
+}
 
 export type CedarPgDevOptions = {
   mode?: DbMode;
@@ -29,9 +35,10 @@ function logStatus(server: ViteDevServer, options: CedarPgDevOptions): void {
 
 /**
  * Vite / Vite+ plugin: print a cedar-pg status panel on listen and register
- * CLI shortcuts (`d` status, `s` studio). Does **not** acquire — pair with
- * `cedarPgTasks()` / `dependsOn: ['db:acquire']`. Shortcuts need Vite 8+ to
- * merge; `s` does not collide with `--profile`.
+ * CLI shortcuts (`d` status, `s` studio) on Vite 8+. Does **not** acquire —
+ * pair with `cedarPgTasks()` / `dependsOn: ['db:acquire']`. Vite 7 / Cedar
+ * skips `bindCLIShortcuts` (it overwrites readline). `s` does not collide
+ * with `--profile`.
  */
 export function cedarPgDev(options: CedarPgDevOptions = {}): Plugin {
   return {
@@ -111,10 +118,12 @@ export function cedarPgDev(options: CedarPgDevOptions = {}): Plugin {
         });
       }
 
-      server.bindCLIShortcuts({
-        print: false,
-        customShortcuts: shortcuts,
-      });
+      if (viteMergesCliShortcuts()) {
+        server.bindCLIShortcuts({
+          print: false,
+          customShortcuts: shortcuts,
+        });
+      }
     },
   };
 }

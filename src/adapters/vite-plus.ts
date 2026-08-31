@@ -3,7 +3,7 @@
  *
  * - `cedarPgTasks()` — merge into `run.tasks` so `vp run test` / `vp run dev`
  *   depend on cedarpg acquire.
- * - `cedarPgDev()` — Vite plugin: status panel + `d` / `s` shortcuts (no acquire).
+ * - `cedarPgDev()` — Vite plugin: status panel + `d` / `s` shortcuts on Vite 8 (no acquire).
  *
  * @example
  * ```ts

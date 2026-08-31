@@ -6,6 +6,7 @@ import { EventEmitter } from "node:events";
 import type { ViteDevServer } from "vite";
 import { writeLease, type Lease } from "../src/core/lease.ts";
 import { cedarPgDev } from "../src/adapters/vite-plus.ts";
+import { viteMergesCliShortcuts } from "../src/adapters/vite-dev-plugin.ts";
 
 function invokeConfigureServer(
   plugin: ReturnType<typeof cedarPgDev>,
@@ -39,6 +40,11 @@ function mockServer(root: string, bindCLIShortcuts: ReturnType<typeof vi.fn>) {
   };
   return { server, info, warn, error };
 }
+
+test("viteMergesCliShortcuts is false on Vite 7 (Cedar) and true on Vite 8", () => {
+  expect(viteMergesCliShortcuts("7.3.5")).toBe(false);
+  expect(viteMergesCliShortcuts("8.2.0")).toBe(true);
+});
 
 test("cedarPgDev registers d and s shortcuts without printing help", () => {
   const bindCLIShortcuts = vi.fn();

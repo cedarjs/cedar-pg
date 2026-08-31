@@ -4,7 +4,7 @@
 
 ### Added
 
-- Vite plugin `cedarPgDev()` (`@cedarjs/pg/vite-plus`): status panel on listen + shortcuts `d` (status) / `s` (Prisma or Drizzle Studio). Shortcuts need Vite 8 / vite-plus (optional peer `vite >= 8`). Studio is detected from the Vite app root (or `cwd`) up to the worktree
+- Vite plugin `cedarPgDev()` (`@cedarjs/pg/vite-plus`): status panel on listen + shortcuts `d` (status) / `s` (Prisma or Drizzle Studio). Shortcuts bind only on Vite 8 / vite-plus (optional peer `vite >= 8`); Vite 7 / Cedar skips them so the listen panel still prints. Studio is detected from the Vite app root (or `cwd`) up to the worktree
 - CLI: `cedarpg status` (human + `--json`) and `cedarpg studio` (`--prisma` / `--drizzle`). Studio runs attached (inherit stdio, exit code) and detects from cwd up to the worktree
 - Public `resolveDevStatus` / `formatDevStatus` for scripting
 
