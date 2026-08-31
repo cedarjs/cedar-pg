@@ -1,12 +1,4 @@
 #!/usr/bin/env node
-/**
- * Adapter + real Postgres smoke: pack → install tarball in a temp consumer →
- * run Vitest and Jest through @cedarjs/pg adapters.
- *
- * Sets CI=true + CEDAR_PG_EPHEMERAL_HOST=1 so policy prefers ephemeral when no
- * host is live. Attach still wins if a host is already live — cold ephemeral
- * start is what empty CI runners exercise (workflow runs ci-install-autopg.sh).
- */
 import { cpSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -63,5 +55,24 @@ run("npx", ["jest", "--config", "jest.config.cjs", "--runInBand"], {
   cwd: tmp,
   env: smokeEnv,
 });
+
+console.log("==> cedarpg acquire / run / dispose");
+run("git", ["init"], { cwd: tmp, env: smokeEnv, silent: true });
+const cli = join(tmp, "node_modules", PACKAGE_NAME, "dist/cli.mjs");
+run("node", [cli, "acquire", "--mode=test", "--json"], { cwd: tmp, env: smokeEnv });
+run(
+  "node",
+  [
+    cli,
+    "run",
+    "--mode=test",
+    "--",
+    "node",
+    "-e",
+    "if (!process.env.DATABASE_URL.includes('/cpg_')) process.exit(1)",
+  ],
+  { cwd: tmp, env: smokeEnv },
+);
+run("node", [cli, "dispose", "--mode=test"], { cwd: tmp, env: smokeEnv });
 
 console.log("smoke-pg: PASS");

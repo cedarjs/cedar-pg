@@ -14,11 +14,9 @@ import {
 /** How cedar-pg starts an autopg host when none is already live. */
 export type HostStartPolicy = "local" | "ephemeral";
 
-/** Opinionated install + postmaster argv for CI / ephemeral runners. */
 export type EphemeralHostRecipe = {
   dataDir: string;
   port: number;
-  installArgs: string[];
   postmasterArgs: string[];
 };
 
@@ -31,7 +29,6 @@ export type EphemeralRecipeContext = {
   port?: number;
 };
 
-/** Fixed CI TCP port so install registration and postmaster listen on the same port. */
 const EPHEMERAL_PORT = 55432;
 
 const OWNED_POSTMASTER_READY_MS = 30_000;
@@ -66,10 +63,10 @@ export function resolveEphemeralHostPolicy(env: NodeJS.ProcessEnv = process.env)
   return "local";
 }
 
-/**
- * Fixed CI recipe: shared `--port` on install + postmaster, `--no-pm2 --no-ui`,
- * and `--ram` + `/dev/shm/cedar-pg-<uid>` on Linux when shm exists.
- */
+export function allowOwnedPostmasterFallback(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.CEDAR_PG_EPHEMERAL_HOST !== "0";
+}
+
 export function ephemeralHostRecipe(ctx: EphemeralRecipeContext = {}): EphemeralHostRecipe {
   const platform = ctx.platform ?? process.platform;
   const shmAvailable = ctx.shmAvailable ?? (platform === "linux" && existsSync("/dev/shm"));
@@ -80,8 +77,6 @@ export function ephemeralHostRecipe(ctx: EphemeralRecipeContext = {}): Ephemeral
     ? `/dev/shm/cedar-pg-${uid}`
     : join(ctx.tmpDir ?? tmpdir(), "cedar-pg-host");
 
-  const installArgs = ["install", "--no-pm2", "--no-ui", "--port", String(port), "--data", dataDir];
-  // Always pass --port/--data/--socket-dir so postmaster matches the install record.
   const postmasterArgs = [
     "postmaster",
     ...(useRam ? ["--ram"] : []),
@@ -93,10 +88,9 @@ export function ephemeralHostRecipe(ctx: EphemeralRecipeContext = {}): Ephemeral
     dataDir,
   ];
 
-  return { dataDir, port, installArgs, postmasterArgs };
+  return { dataDir, port, postmasterArgs };
 }
 
-/** Discovery from the recipe port — TCP readiness is the authority, not `autopg status`. */
 export function discoveryFromRecipe(bin: string, recipe: EphemeralHostRecipe): AutopgDiscovery {
   return { port: recipe.port, adminUrl: adminUrlFor(recipe.port), bin };
 }
@@ -200,7 +194,10 @@ function canConnect(port: number): Promise<boolean> {
   });
 }
 
-/** Kill a detached owned postmaster (process group when possible) and drop our handle. */
+function releaseOwnedChild(child: ChildProcess): void {
+  child.unref();
+}
+
 function killOwnedChild(child: ChildProcess): void {
   const pid = child.pid;
   if (pid != null) {
@@ -214,7 +211,7 @@ function killOwnedChild(child: ChildProcess): void {
       }
     }
   }
-  child.unref();
+  releaseOwnedChild(child);
 }
 
 export type WaitForOwnedPostmasterOptions = {
@@ -254,14 +251,6 @@ export async function waitForOwnedPostmaster(opts: WaitForOwnedPostmasterOptions
   );
 }
 
-/**
- * Install + detached postmaster with fully ignored stdio so the CI job owns lifetime
- * (caller exit must not close pipes under the daemon).
- *
- * Readiness is TCP accept on the recipe port — not `autopg status`, which succeeds
- * after `install --no-pm2` before postmaster is listening. On success, discovery is
- * recipe-derived (same port). On failure, the spawned child is killed.
- */
 async function startEphemeralHost(bin: string): Promise<AutopgDiscovery> {
   const recipe = ephemeralHostRecipe();
   const useRamShm = recipe.postmasterArgs.includes("--ram");
@@ -284,7 +273,6 @@ async function startEphemeralHost(bin: string): Promise<AutopgDiscovery> {
   }
 
   mkdirSync(recipe.dataDir, { recursive: true });
-  runInstall(bin, recipe.installArgs, useRamShm);
 
   const state: {
     exit: { code: number | null; signal: NodeJS.Signals | null } | null;
@@ -331,32 +319,49 @@ async function startEphemeralHost(bin: string): Promise<AutopgDiscovery> {
     throw err;
   }
 
-  // Success: job owns lifetime — drop our handle without killing.
-  child.unref();
+  releaseOwnedChild(child);
   return discoveryFromRecipe(bin, recipe);
 }
 
-/**
- * Ensure the host postmaster is up.
- *
- * - Attaches when `autopg status --json` shows a live host.
- * - Otherwise starts from {@link resolveEphemeralHostPolicy}: local pm2 `install`,
- *   or opinionated ephemeral (`--no-pm2 --no-ui` + detached postmaster).
- * - CI job owns ephemeral postmaster lifetime on success (no cedar-pg host dispose).
- * - Failed ephemeral start kills the spawned child so ensure is atomic for the caller.
- * - Before ephemeral cold-start, prunes stale `/dev/shm` leftovers when the recipe port is dead.
- */
-export async function ensureHostRunning(bin = requireAutopgBin()): Promise<AutopgDiscovery> {
+async function startOrReuseEphemeral(bin: string): Promise<AutopgDiscovery> {
+  const recipe = ephemeralHostRecipe();
+  if (await canConnect(recipe.port)) return discoveryFromRecipe(bin, recipe);
+  return startEphemeralHost(bin);
+}
+
+async function attachLiveDiscovery(bin: string): Promise<AutopgDiscovery | null> {
+  let discovered: AutopgDiscovery;
   try {
-    return discoverHost(bin);
+    discovered = discoverHost(bin);
   } catch {
-    // status failed — start host per policy
+    return null;
   }
+  return (await canConnect(discovered.port)) ? discovered : null;
+}
+
+export async function ensureHostRunning(bin = requireAutopgBin()): Promise<AutopgDiscovery> {
+  const attached = await attachLiveDiscovery(bin);
+  if (attached) return attached;
 
   if (resolveEphemeralHostPolicy() === "ephemeral") {
-    return startEphemeralHost(bin);
+    return startOrReuseEphemeral(bin);
   }
 
-  runInstall(bin, ["install"], false);
-  return discoverHost(bin);
+  let installError: unknown;
+  try {
+    runInstall(bin, ["install"], false);
+  } catch (err) {
+    installError = err;
+  }
+  if (installError == null) {
+    const afterInstall = await attachLiveDiscovery(bin);
+    if (afterInstall) return afterInstall;
+  }
+
+  if (!allowOwnedPostmasterFallback()) {
+    throw installError instanceof Error
+      ? installError
+      : new Error(`autopg host is not running.\n${INSTALL_HINT}`);
+  }
+  return startOrReuseEphemeral(bin);
 }

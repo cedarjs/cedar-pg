@@ -89,7 +89,7 @@ Keep logic in the canonical layer. Prefer reuse over one-off branches in adapter
 
 **Migrate stays app-owned.** Stock `@cedarjs/pg/jest` / `vitest` only acquire/dispose. TEMPLATE adapters require `createGlobalSetup({ migrate })`; string-resolving the package entry without a migrate hook must throw.
 
-**Host bootstrap stays internal.** Callers use `acquire` (and `adminUrl`). Do not re-export `ensureHostRunning` or grow a public host-options bag; ephemeral behavior is env-driven (`CI`, `CEDAR_PG_EPHEMERAL_HOST`).
+**Host bootstrap stays internal.** Callers use `acquire` (and `adminUrl`). Do not re-export `ensureHostRunning` or grow a public host-options bag; ephemeral behavior is env-driven (`CI`, `CEDAR_PG_EPHEMERAL_HOST`). Default local acquire may start an owned postmaster after a no-op `autopg install` (stopped pm2); `CEDAR_PG_EPHEMERAL_HOST=0` disables that fallback.
 
 ## Env and policy (easy to get wrong)
 

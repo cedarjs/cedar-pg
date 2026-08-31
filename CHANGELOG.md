@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Attach liveness: `parseHostStatus` reads autopg v3 `status` / `runtime.live` (a stopped pm2 registration is not live). `ensureHostRunning` requires TCP on the discovered port before attaching. `cedarpg acquire` with no listening host no longer talks to registered port 25432 (`ECONNREFUSED`); after a failed or no-op `autopg install` it starts an owned postmaster on 55432 unless `CEDAR_PG_EPHEMERAL_HOST=0`.
+- Ephemeral host: start detached `autopg postmaster` only. Do not run `install --no-pm2` (that rewrites `~/.autopg/admin.json` and fails with `supervisor mismatch` next to a local pm2 install).
 - TEMPLATE `cloneWorkerDatabase`: default clone name is unique per call (`<worker>_<pid>_<time>`) so Jest `setupFiles` (module reload per file) no longer hits `database already exists` on `_c_<workerId>`
 - Ephemeral host: prune stale `/dev/shm/cedar-pg-*` / `pgserve-*` / `PostgreSQL.*` when the recipe port is dead; append remount/cleanup hints on Disk quota / ENOSPC / 53100
 

@@ -8,10 +8,29 @@ import {
 } from "../src/providers/autopg.ts";
 
 test("parseHostStatus requires numeric port", () => {
-  expect(parseHostStatus('{"port":5433,"running":true}')).toEqual({ port: 5433 });
-  expect(() => parseHostStatus('{"running":true}')).toThrow(/missing numeric port/);
-  expect(() => parseHostStatus('{"port":5432,"running":false}')).toThrow(/not running/);
+  expect(parseHostStatus('{"port":5433,"status":"online"}')).toEqual({ port: 5433 });
+  expect(() => parseHostStatus('{"status":"online"}')).toThrow(/missing numeric port/);
   expect(() => parseHostStatus("not-json")).toThrow(/invalid JSON/);
+});
+
+test("parseHostStatus treats autopg v3 status JSON as live only when online", () => {
+  const stopped = `{
+    "installed": true,
+    "name": "autopg-server",
+    "status": "stopped",
+    "pid": null,
+    "port": 25432,
+    "runtime": null
+  }`;
+  expect(() => parseHostStatus(stopped)).toThrow(/not running/);
+  expect(() => parseHostStatus('{"port":55432,"status":"errored"}')).toThrow(/not running/);
+  expect(() =>
+    parseHostStatus('{"port":55432,"status":"online","runtime":{"live":false}}'),
+  ).toThrow(/not running/);
+  expect(
+    parseHostStatus('{"port":55432,"status":"online","pid":1,"runtime":{"live":true}}'),
+  ).toEqual({ port: 55432 });
+  expect(() => parseHostStatus('{"port":5432,"running":false}')).toThrow(/not running/);
 });
 
 test("adminUrlFor uses autopg default credentials and AUTOPG_PG_* overrides", () => {

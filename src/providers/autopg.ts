@@ -48,20 +48,35 @@ export function requireAutopgBin(): string {
   return bin;
 }
 
+function liveFlagFromRuntime(runtime: unknown): unknown {
+  if (runtime === null || typeof runtime !== "object") return undefined;
+  return "live" in runtime ? runtime.live : undefined;
+}
+
 /**
- * Parse `autopg status --json` output. Requires a numeric port and running !== false.
+ * Parse `autopg status --json`. Live means pm2 `status === "online"` (v3)
+ * and `runtime.live` is not false. `running: false` is also down.
  */
 export function parseHostStatus(json: string): { port: number } {
-  let parsed: { port?: unknown; running?: unknown };
+  let parsed: {
+    port?: unknown;
+    running?: unknown;
+    status?: unknown;
+    runtime?: unknown;
+  };
   try {
-    parsed = JSON.parse(json) as { port?: unknown; running?: unknown };
+    parsed = JSON.parse(json) as typeof parsed;
   } catch {
     throw new Error(`autopg status --json returned invalid JSON.\n${INSTALL_HINT}`);
   }
   if (typeof parsed.port !== "number") {
     throw new Error(`autopg status --json missing numeric port.\n${INSTALL_HINT}`);
   }
-  if (parsed.running === false) {
+  const down =
+    parsed.running === false ||
+    (typeof parsed.status === "string" && parsed.status !== "online") ||
+    liveFlagFromRuntime(parsed.runtime) === false;
+  if (down) {
     throw new Error(`autopg host is not running.\n${INSTALL_HINT}`);
   }
   return { port: parsed.port };

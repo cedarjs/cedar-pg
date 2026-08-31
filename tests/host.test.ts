@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { adminUrlFor } from "../src/providers/autopg.ts";
 import {
+  allowOwnedPostmasterFallback,
   discoveryFromRecipe,
   ephemeralHostRecipe,
   EPHEMERAL_SHM_HINT,
@@ -22,6 +23,13 @@ test("resolveEphemeralHostPolicy from CEDAR_PG_EPHEMERAL_HOST and CI", () => {
   expect(resolveEphemeralHostPolicy({})).toBe("local");
 });
 
+test("allowOwnedPostmasterFallback is off only when CEDAR_PG_EPHEMERAL_HOST=0", () => {
+  expect(allowOwnedPostmasterFallback({})).toBe(true);
+  expect(allowOwnedPostmasterFallback({ CI: "true" })).toBe(true);
+  expect(allowOwnedPostmasterFallback({ CEDAR_PG_EPHEMERAL_HOST: "1" })).toBe(true);
+  expect(allowOwnedPostmasterFallback({ CEDAR_PG_EPHEMERAL_HOST: "0" })).toBe(false);
+});
+
 test("ephemeralHostRecipe uses RAM on Linux when /dev/shm is available", () => {
   const recipe = ephemeralHostRecipe({
     platform: "linux",
@@ -30,15 +38,7 @@ test("ephemeralHostRecipe uses RAM on Linux when /dev/shm is available", () => {
   });
   expect(recipe.dataDir).toBe("/dev/shm/cedar-pg-1000");
   expect(recipe.port).toBe(55432);
-  expect(recipe.installArgs).toEqual([
-    "install",
-    "--no-pm2",
-    "--no-ui",
-    "--port",
-    "55432",
-    "--data",
-    "/dev/shm/cedar-pg-1000",
-  ]);
+  expect(recipe).not.toHaveProperty("installArgs");
   expect(recipe.postmasterArgs).toEqual([
     "postmaster",
     "--ram",
@@ -61,15 +61,7 @@ test("ephemeralHostRecipe falls back to disk tmpdir without --ram", () => {
   });
   expect(recipe.dataDir).toBe("/tmp/cedar-test/cedar-pg-host");
   expect(recipe.port).toBe(55433);
-  expect(recipe.installArgs).toEqual([
-    "install",
-    "--no-pm2",
-    "--no-ui",
-    "--port",
-    "55433",
-    "--data",
-    "/tmp/cedar-test/cedar-pg-host",
-  ]);
+  expect(recipe).not.toHaveProperty("installArgs");
   expect(recipe.postmasterArgs).toEqual([
     "postmaster",
     "--port",
