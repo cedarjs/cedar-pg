@@ -80,7 +80,7 @@ Keep logic in the canonical layer. Prefer reuse over one-off branches in adapter
 | Skip policy (`CEDAR_PG=0`, external URL, force) | `src/core/policy.ts` (`resolveAcquireSkip`, `runIfNeeded`, `applyDatabaseUrlEnv`)  |
 | TEMPLATE mark / clone                           | `src/core/template.ts`                                                             |
 | Lease read/write / registry                     | `src/core/lease.ts`                                                                |
-| Host attach vs ephemeral CI start               | `src/providers/host.ts` (internal; `ensureHostRunning` is **not** a public export) |
+| Host attach / local recovery / ephemeral start  | `src/providers/host.ts` (internal; `ensureHostRunning` is **not** a public export) |
 | SQL / autopg CLI / URLs / role password         | `src/providers/autopg.ts`                                                          |
 | Shared Vite+/Nx task strings                    | `src/adapters/tasks.ts` (`cedarPgLifecycleTargets`, `cedarPgRunCommand`)           |
 | Runner TEMPLATE orchestration + migrate hook    | `src/adapters/template-mode.ts` → thin Jest/Vitest wrappers                        |
@@ -89,7 +89,7 @@ Keep logic in the canonical layer. Prefer reuse over one-off branches in adapter
 
 **Migrate stays app-owned.** Stock `@cedarjs/pg/jest` / `vitest` only acquire/dispose. TEMPLATE adapters require `createGlobalSetup({ migrate })`; string-resolving the package entry without a migrate hook must throw.
 
-**Host bootstrap stays internal.** Callers use `acquire` (and `adminUrl`). Do not re-export `ensureHostRunning` or grow a public host-options bag; ephemeral behavior is env-driven (`CI`, `CEDAR_PG_EPHEMERAL_HOST`). Default local acquire may start an owned postmaster after a no-op `autopg install` (stopped pm2); `CEDAR_PG_EPHEMERAL_HOST=0` disables that fallback.
+**Host bootstrap stays internal.** Callers use `acquire` (and `adminUrl`). Do not re-export `ensureHostRunning` or grow a public host-options bag; ephemeral behavior is env-driven (`CI`, `CEDAR_PG_EPHEMERAL_HOST`). Liveness is a TCP accept, never `autopg status` alone. Local recovery revives the **registered** host (`autopg restart`, then `autopg install`) — an owned postmaster is ephemeral/CI-only, and `CEDAR_PG_EPHEMERAL_HOST=0` disables it everywhere. Do not add a second local Postgres port/data dir.
 
 ## Env and policy (easy to get wrong)
 

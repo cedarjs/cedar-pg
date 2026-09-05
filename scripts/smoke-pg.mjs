@@ -1,4 +1,13 @@
 #!/usr/bin/env node
+/**
+ * Adapter + real Postgres smoke: pack → install tarball in a temp consumer →
+ * run Vitest, Jest, and the CLI through @cedarjs/pg.
+ *
+ * Sets CI=true + CEDAR_PG_EPHEMERAL_HOST=1 so policy starts an owned ephemeral
+ * postmaster when nothing is listening — what empty CI runners exercise (the
+ * workflow installs the binary only, via ci-install-autopg.sh). Attach still
+ * wins if a host is already live.
+ */
 import { cpSync } from "node:fs";
 import { join } from "node:path";
 import {

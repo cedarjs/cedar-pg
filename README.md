@@ -264,9 +264,11 @@ await drop();
 loadDevEnv({ overwrite: true }); // override .env DATABASE_URL from .cedarpg/dev.env
 ```
 
-### Host startup (CI ephemeral)
+### Host startup (local recovery, CI ephemeral)
 
-By default cedar-pg **attaches** to a live autopg host (`autopg status` plus TCP). A registered-but-stopped pm2 host is not live. If nothing is listening it tries bare `autopg install`, then an owned postmaster on 55432 — so `cedarpg acquire` works when autopg is installed but not running. GitHub Actions still skip pm2 via `CI=true`.
+cedar-pg **attaches** to the autopg host as soon as TCP accepts on the port from `autopg status --json`. Registration is not liveness: an installed-but-stopped host still reports port 25432, and attaching to it was the `ECONNREFUSED 127.0.0.1:25432` bug.
+
+When nothing is listening, cedar-pg brings **your** autopg host up — `autopg restart` (autopg's start verb), then `autopg install` if the host was never registered — and attaches once TCP accepts. Same singleton, same port, same `~/.autopg/data`, still running after your process exits. If neither verb produces a listener, `acquire` fails with what it tried instead of connecting to a dead port. cedar-pg never runs a second local Postgres.
 
 In CI, cedar-pg starts an **opinionated ephemeral host** automatically when `CI=true` (or when forced). Callers just use `acquire` — no host options bag:
 
@@ -277,12 +279,12 @@ import { acquire } from "@cedarjs/pg";
 const { databaseUrl } = await acquire({ mode: "test" });
 ```
 
-| Signal                      | Effect                                                                         |
-| --------------------------- | ------------------------------------------------------------------------------ |
-| `CEDAR_PG_EPHEMERAL_HOST=1` | Prefer ephemeral start when **no** host is live (attach still wins)            |
-| `CEDAR_PG_EPHEMERAL_HOST=0` | Force local attach / pm2 install only (even if `CI=true`); no owned postmaster |
-| unset + `CI=true`           | Prefer ephemeral when no host is live                                          |
-| otherwise                   | Attach if live, else `autopg install`, else owned postmaster on 55432          |
+| Signal                      | Effect (attach always wins when something is listening)                       |
+| --------------------------- | ----------------------------------------------------------------------------- |
+| `CEDAR_PG_EPHEMERAL_HOST=1` | Ephemeral: owned postmaster on 55432                                          |
+| `CEDAR_PG_EPHEMERAL_HOST=0` | Never own a postmaster (even when `CI=true`): local autopg host only, or fail |
+| unset + `CI=true`           | Ephemeral                                                                     |
+| unset                       | Local: `autopg restart`, then `autopg install`, then fail                     |
 
 Ephemeral recipe (not configurable via cedar-pg):
 
@@ -295,7 +297,7 @@ Ephemeral recipe (not configurable via cedar-pg):
   `/dev/shm/cedar-pg-*`, `pgserve-*`, and `PostgreSQL.*` (OOM-killed runs filling tmpfs).
   Safe on isolated CI VMs; on shared self-hosted runners another job’s leftovers could match those globs.
 
-If TCP already accepts on the discovered autopg port, or on the recipe port (55432) when an owned postmaster is allowed, cedar-pg attaches and does not start another. The **process/job owns** ephemeral postmaster lifetime (runner teardown / `/dev/shm`); there is no cedar-pg host dispose API.
+If TCP already accepts on the discovered autopg port — or, in ephemeral mode, on the recipe port (55432) — cedar-pg attaches and does not start another. The **CI job owns** ephemeral postmaster lifetime (runner teardown / `/dev/shm`); there is no cedar-pg host dispose API.
 
 Cloud / small VMs often ship `/dev/shm` at ~64MB — too small for `--ram`. Remount before tests if needed (`sudo mount -o remount,size=6G /dev/shm`). See [Troubleshooting](#troubleshooting).
 
@@ -423,7 +425,7 @@ Worker adapters call `cloneFromTemplateIfNeeded` (shared skip policy via `runIfN
 | `CEDAR_PG=0`                   | Disable auto-acquire in adapters                                                                               |
 | `TEST_DATABASE_URL`            | Escape hatch: skip acquire for real external DBs (not `cpg_*` / `file:` / `{…}` / `<…>` template placeholders) |
 | `CEDAR_PG_FORCE=1`             | Ignore external-URL escape hatch (adapters + `cedarpg acquire --force` / `run --force`)                        |
-| `CEDAR_PG_EPHEMERAL_HOST`      | `1` force / `0` disable ephemeral host (auto when `CI=true`)                                                   |
+| `CEDAR_PG_EPHEMERAL_HOST`      | `1` owned postmaster; `0` never own one (even in CI); unset + `CI=true` → ephemeral                            |
 | `CEDAR_PG_REGISTRY_DIR`        | Override global lease registry (for `gc`)                                                                      |
 | `CEDAR_PG_SKIP_POSTINSTALL=1`  | Skip autopg install hook                                                                                       |
 | `CEDAR_PG_INSTALL_AUTOPG=1`    | Under `CI=true`, run binary-only `ci-install-autopg.sh` from postinstall                                       |
@@ -440,12 +442,12 @@ Worker adapters call `cloneFromTemplateIfNeeded` (shared skip policy via `runIfN
 
 ## Troubleshooting
 
-| Symptom                                                                                 | Fix                                                                                                                                                                                                                                                                                                |
-| --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ECONNREFUSED 127.0.0.1:25432` on `cedarpg acquire`                                     | autopg is registered (pm2) but not listening. cedar-pg no longer treats that as live; it starts an owned postmaster on 55432 unless `CEDAR_PG_EPHEMERAL_HOST=0`.                                                                                                                                   |
-| `database already exists: …_c_<workerId>` in Jest                                       | Use current `@cedarjs/pg` (unique default clone names). Prefer `setupFilesAfterEnv` + `beforeAll` (Jest globals). Both hooks run per test file — memo is per module load, not process-wide. Avoid bare `JEST_WORKER_ID` as an explicit `name`.                                                     |
-| Acquire skipped; tests hit shared / stale Postgres                                      | Real `.env` `TEST_DATABASE_URL` / `DATABASE_URL` trips the escape hatch. Set `CEDAR_PG_FORCE=1` once in `jest.config.js`, or `force: true` / `cedarpg run --force`.                                                                                                                                |
-| `Disk quota exceeded` / `No space left on device` / Postgres `53100` on ephemeral start | Enlarge `/dev/shm` (`sudo mount -o remount,size=6G /dev/shm`). On **isolated** runners only: `rm -rf /dev/shm/cedar-pg-* /dev/shm/pgserve-* /dev/shm/PostgreSQL.*`. Cold-start also prunes these when the recipe port is dead.                                                                     |
-| `autopg: command not found` in CI with Yarn `YARN_ENABLE_SCRIPTS=false`                 | `CEDAR_PG_INSTALL_AUTOPG=1` is not enough when lifecycle scripts are off. With `nodeLinker: node-modules`, run `bash node_modules/@cedarjs/pg/scripts/ci-install-autopg.sh` and put `~/.local/bin` on `PATH` (or use `setup-autopg`). PnP: resolve the script path via Yarn, or prefer the Action. |
-| Nx child still uses `.env` `DATABASE_URL`                                               | `dependsOn` does not forward acquire env. Wrap with `cedarpg run --mode=dev --force -- <cmd>`, or `loadDevEnv({ overwrite: true })`.                                                                                                                                                               |
-| Role/DB errors under parallel Nx targets                                                | Do not run concurrent `acquire` / `run` on the same worktree. One `db:ready`, then `run` wrappers.                                                                                                                                                                                                 |
+| Symptom                                                                                 | Fix                                                                                                                                                                                                                                                                                                                                          |
+| --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ECONNREFUSED 127.0.0.1:25432` on `cedarpg acquire`                                     | autopg is registered but not listening. cedar-pg no longer treats registration as live: it runs `autopg restart` (then `install`) and attaches once TCP accepts. `restart` exiting 0 is not proof — when pm2 is missing it still prints “respawned daemon”. If both verbs fail, install pm2 / fix the supervisor (`pm2 logs autopg-server`). |
+| `database already exists: …_c_<workerId>` in Jest                                       | Use current `@cedarjs/pg` (unique default clone names). Prefer `setupFilesAfterEnv` + `beforeAll` (Jest globals). Both hooks run per test file — memo is per module load, not process-wide. Avoid bare `JEST_WORKER_ID` as an explicit `name`.                                                                                               |
+| Acquire skipped; tests hit shared / stale Postgres                                      | Real `.env` `TEST_DATABASE_URL` / `DATABASE_URL` trips the escape hatch. Set `CEDAR_PG_FORCE=1` once in `jest.config.js`, or `force: true` / `cedarpg run --force`.                                                                                                                                                                          |
+| `Disk quota exceeded` / `No space left on device` / Postgres `53100` on ephemeral start | Enlarge `/dev/shm` (`sudo mount -o remount,size=6G /dev/shm`). On **isolated** runners only: `rm -rf /dev/shm/cedar-pg-* /dev/shm/pgserve-* /dev/shm/PostgreSQL.*`. Cold-start also prunes these when the recipe port is dead.                                                                                                               |
+| `autopg: command not found` in CI with Yarn `YARN_ENABLE_SCRIPTS=false`                 | `CEDAR_PG_INSTALL_AUTOPG=1` is not enough when lifecycle scripts are off. With `nodeLinker: node-modules`, run `bash node_modules/@cedarjs/pg/scripts/ci-install-autopg.sh` and put `~/.local/bin` on `PATH` (or use `setup-autopg`). PnP: resolve the script path via Yarn, or prefer the Action.                                           |
+| Nx child still uses `.env` `DATABASE_URL`                                               | `dependsOn` does not forward acquire env. Wrap with `cedarpg run --mode=dev --force -- <cmd>`, or `loadDevEnv({ overwrite: true })`.                                                                                                                                                                                                         |
+| Role/DB errors under parallel Nx targets                                                | Do not run concurrent `acquire` / `run` on the same worktree. One `db:ready`, then `run` wrappers.                                                                                                                                                                                                                                           |

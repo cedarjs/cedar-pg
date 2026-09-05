@@ -13,24 +13,23 @@ test("parseHostStatus requires numeric port", () => {
   expect(() => parseHostStatus("not-json")).toThrow(/invalid JSON/);
 });
 
-test("parseHostStatus treats autopg v3 status JSON as live only when online", () => {
+test("parseHostStatus reports the registered port without judging liveness", () => {
+  // Real `autopg status --json` for an installed-but-stopped pm2 host: the port
+  // is registration, not a listener. TCP is the only liveness gate (host.ts).
   const stopped = `{
     "installed": true,
     "name": "autopg-server",
     "status": "stopped",
     "pid": null,
     "port": 25432,
-    "runtime": null
+    "runtime": null,
+    "supervisor": "pm2"
   }`;
-  expect(() => parseHostStatus(stopped)).toThrow(/not running/);
-  expect(() => parseHostStatus('{"port":55432,"status":"errored"}')).toThrow(/not running/);
-  expect(() =>
-    parseHostStatus('{"port":55432,"status":"online","runtime":{"live":false}}'),
-  ).toThrow(/not running/);
-  expect(
-    parseHostStatus('{"port":55432,"status":"online","pid":1,"runtime":{"live":true}}'),
-  ).toEqual({ port: 55432 });
-  expect(() => parseHostStatus('{"port":5432,"running":false}')).toThrow(/not running/);
+  expect(parseHostStatus(stopped)).toEqual({ port: 25432 });
+  // Supervisor-specific status strings (systemd-user / launchd tiers) never
+  // hide the port from attach.
+  expect(parseHostStatus('{"port":55432,"status":"running"}')).toEqual({ port: 55432 });
+  expect(parseHostStatus('{"port":5432,"running":false}')).toEqual({ port: 5432 });
 });
 
 test("adminUrlFor uses autopg default credentials and AUTOPG_PG_* overrides", () => {

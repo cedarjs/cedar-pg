@@ -48,22 +48,17 @@ export function requireAutopgBin(): string {
   return bin;
 }
 
-function liveFlagFromRuntime(runtime: unknown): unknown {
-  if (runtime === null || typeof runtime !== "object") return undefined;
-  return "live" in runtime ? runtime.live : undefined;
-}
-
 /**
- * Parse `autopg status --json`. Live means pm2 `status === "online"` (v3)
- * and `runtime.live` is not false. `running: false` is also down.
+ * Parse `autopg status --json` → the **registered** port. Throws only when the
+ * output is not autopg status JSON.
+ *
+ * Registration is not liveness: autopg reports a port for a stopped host too,
+ * and its `status` string is supervisor-specific (pm2 `online`, systemd-user /
+ * launchd differ). Liveness is a TCP accept on the port, proven by the caller —
+ * `acquire` does that before it connects.
  */
 export function parseHostStatus(json: string): { port: number } {
-  let parsed: {
-    port?: unknown;
-    running?: unknown;
-    status?: unknown;
-    runtime?: unknown;
-  };
+  let parsed: { port?: unknown };
   try {
     parsed = JSON.parse(json) as typeof parsed;
   } catch {
@@ -71,13 +66,6 @@ export function parseHostStatus(json: string): { port: number } {
   }
   if (typeof parsed.port !== "number") {
     throw new Error(`autopg status --json missing numeric port.\n${INSTALL_HINT}`);
-  }
-  const down =
-    parsed.running === false ||
-    (typeof parsed.status === "string" && parsed.status !== "online") ||
-    liveFlagFromRuntime(parsed.runtime) === false;
-  if (down) {
-    throw new Error(`autopg host is not running.\n${INSTALL_HINT}`);
   }
   return { port: parsed.port };
 }
@@ -101,7 +89,9 @@ export function adminUrlFor(port: number, env: NodeJS.ProcessEnv = process.env):
 }
 
 /**
- * Discover a live autopg host via `autopg status --json`. Throws if the host is not proven live.
+ * Discover the registered autopg host (port + admin URL) via `autopg status --json`.
+ * Throws when autopg cannot be queried; does **not** prove a listener — probe TCP
+ * (or use `acquire`, which does) before connecting.
  */
 export function discoverHost(bin = requireAutopgBin()): AutopgDiscovery {
   let status: string;
