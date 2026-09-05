@@ -1,12 +1,25 @@
+import { createRequire } from "node:module";
 import type { ChildProcess } from "node:child_process";
 import type { Plugin, ViteDevServer } from "vite";
-import { version as viteVersion } from "vite";
 import { CLI_NAME } from "../core/constants.ts";
 import { formatDevStatus, resolveDevStatus } from "../core/status.ts";
 import type { DbMode } from "../core/naming.ts";
 import { detectStudio, openStudio, studioChildRunning, type StudioKind } from "./studio.ts";
 
-export function viteBindsPluginShortcuts(version: string = viteVersion): boolean {
+const requireVite = createRequire(import.meta.url);
+
+function installedViteVersion(): string | undefined {
+  try {
+    return (requireVite("vite/package.json") as { version: string }).version;
+  } catch {
+    return undefined;
+  }
+}
+
+export function viteBindsPluginShortcuts(
+  version: string | undefined = installedViteVersion(),
+): boolean {
+  if (version === undefined) return false;
   return Number.parseInt(version, 10) >= 8;
 }
 
