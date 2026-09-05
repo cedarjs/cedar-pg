@@ -21,7 +21,6 @@ test("detectStudio returns null when no ORM packages", () => {
   try {
     writePkg(root);
     expect(detectStudio({ root })).toBeNull();
-    expect(detectStudio({ root, prefer: false })).toBeNull();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -89,6 +88,7 @@ test("detectStudio prefer falls back to npx at cwd when the package is missing",
     const studio = detectStudio({ root, prefer: "prisma" });
     expect(studio?.kind).toBe("prisma");
     expect(studio?.command).toBe("npx");
+    expect(studio?.shell).toBe(true);
     expect(studio?.cwd).toBe(root);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -116,8 +116,8 @@ test("detectStudio resolves local bin when installed", () => {
     writeFileSync(join(pkgDir, "build", "index.js"), "#!/usr/bin/env node\n");
     const studio = detectStudio({ root });
     expect(studio?.kind).toBe("prisma");
-    expect(studio?.bin).toContain(join("node_modules", "prisma", "build", "index.js"));
-    expect(studio?.command).toBe(studio?.bin);
+    expect(studio?.shell).toBe(false);
+    expect(studio?.command).toContain(join("node_modules", "prisma", "build", "index.js"));
     expect(studio?.cwd).toBe(root);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -131,10 +131,10 @@ test("runStudio returns the child exit code", async () => {
       databaseUrl: "postgres://x",
       studio: {
         kind: "prisma",
-        bin: process.execPath,
         command: process.execPath,
         args: ["-e", "process.exit(3)"],
         cwd: root,
+        shell: false,
       },
     });
     expect(code).toBe(3);
@@ -149,24 +149,20 @@ test("openStudio surfaces spawn errors instead of throwing uncaught", async () =
     const missing = join(root, "no-such-studio-bin");
     const err = await new Promise<Error>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("expected spawn error")), 3000);
-      openStudio(
-        {
-          databaseUrl: "postgres://x",
-          studio: {
-            kind: "prisma",
-            bin: missing,
-            command: missing,
-            args: ["studio"],
-            cwd: root,
-          },
+      const child = openStudio({
+        databaseUrl: "postgres://x",
+        studio: {
+          kind: "prisma",
+          command: missing,
+          args: ["studio"],
+          cwd: root,
+          shell: false,
         },
-        {
-          onError(e) {
-            clearTimeout(timer);
-            resolve(e);
-          },
-        },
-      );
+      });
+      child.once("error", (e) => {
+        clearTimeout(timer);
+        resolve(e);
+      });
     });
     expect(err).toBeInstanceOf(Error);
   } finally {
@@ -181,10 +177,10 @@ test("studioChildRunning is true until the process exits", async () => {
       databaseUrl: "postgres://x",
       studio: {
         kind: "prisma",
-        bin: process.execPath,
         command: process.execPath,
         args: ["-e", "setTimeout(() => {}, 30_000)"],
         cwd: root,
+        shell: false,
       },
     });
     expect(studioChildRunning(child)).toBe(true);

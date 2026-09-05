@@ -3,7 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeLease, type Lease } from "../src/core/lease.ts";
-import { formatDevStatus, resolveDevStatus } from "../src/core/status.ts";
+import { formatDevStatus } from "../src/adapters/status-format.ts";
+import { resolveDevStatus } from "../src/core/status.ts";
 
 function makeLease(partial: Partial<Lease> & Pick<Lease, "root" | "databaseName" | "mode">): Lease {
   return {
@@ -25,9 +26,9 @@ test("resolveDevStatus returns no-lease when missing", () => {
     const status = resolveDevStatus({ root, mode: "dev" });
     expect(status.ok).toBe(false);
     if (status.ok) return;
-    expect(status.reason).toBe("no-lease");
     expect(status.mode).toBe("dev");
     expect(status.root).toBe(root);
+    expect("reason" in status).toBe(false);
     const lines = formatDevStatus(status);
     expect(lines.some((l) => l.includes("no dev lease"))).toBe(true);
     expect(lines.some((l) => l.includes("acquire"))).toBe(true);

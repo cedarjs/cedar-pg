@@ -1,11 +1,10 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
 import { CLI_NAME } from "./core/constants.ts";
-import { acquire, dispose, gc, urlFromLease } from "./core/lifecycle.ts";
-import { resolveWorktreeIdentity } from "./core/worktree.ts";
-import { readLease } from "./core/lease.ts";
-import { formatDevStatus, resolveDevStatus } from "./core/status.ts";
+import { acquire, dispose, gc } from "./core/lifecycle.ts";
+import { resolveDevStatus } from "./core/status.ts";
 import type { DbMode } from "./core/naming.ts";
+import { runAttached } from "./adapters/child.ts";
+import { formatDevStatus } from "./adapters/status-format.ts";
 import { detectStudio, runStudio, type StudioKind } from "./adapters/studio.ts";
 
 function printHelp(): void {
@@ -97,6 +96,10 @@ function studioPrefer(args: ParsedArgs): StudioKind | undefined {
   return undefined;
 }
 
+function writeLines(stream: NodeJS.WriteStream, lines: string[]): void {
+  for (const line of lines) stream.write(`${line}\n`);
+}
+
 function runChild(command: string[], env: NodeJS.ProcessEnv): Promise<number> {
   const [file, ...args] = command;
   if (!file) {
@@ -104,13 +107,47 @@ function runChild(command: string[], env: NodeJS.ProcessEnv): Promise<number> {
       `run requires a command after -- (e.g. ${CLI_NAME} run --mode=dev -- yarn dev)`,
     );
   }
-  return new Promise((resolve, reject) => {
-    const child = spawn(file, args, { stdio: "inherit", env });
-    child.on("error", reject);
-    child.on("exit", (code, signal) => {
-      resolve(signal ? 1 : (code ?? 1));
-    });
-  });
+  return runAttached(file, args, { env });
+}
+
+function cmdPrintUrl(args: ParsedArgs): number {
+  const status = resolveDevStatus({ root: args.root, mode: args.mode });
+  if (!status.ok) {
+    writeLines(process.stderr, formatDevStatus(status));
+    return 2;
+  }
+  process.stdout.write(`${status.databaseUrl}\n`);
+  return 0;
+}
+
+function cmdStatus(args: ParsedArgs): number {
+  const status = resolveDevStatus({ root: args.root, mode: args.mode });
+  if (args.json) {
+    process.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
+    return status.ok ? 0 : 2;
+  }
+  writeLines(process.stdout, formatDevStatus(status));
+  return status.ok ? 0 : 2;
+}
+
+async function cmdStudio(args: ParsedArgs): Promise<number> {
+  const prefer = studioPrefer(args);
+  const status = resolveDevStatus({ root: args.root, mode: args.mode });
+  if (!status.ok) {
+    writeLines(process.stderr, formatDevStatus(status));
+    return 2;
+  }
+  const studio = detectStudio({ root: status.root, cwd: process.cwd(), prefer });
+  if (!studio) {
+    process.stderr.write(
+      `${CLI_NAME}: no Prisma or Drizzle Studio found (install prisma or drizzle-kit)\n`,
+    );
+    return 1;
+  }
+  process.stdout.write(
+    `${CLI_NAME}: opening ${studio.kind} studio (${studio.command} ${studio.args.join(" ")})\n`,
+  );
+  return runStudio({ databaseUrl: status.databaseUrl, studio });
 }
 
 async function main(): Promise<number> {
@@ -213,77 +250,15 @@ async function main(): Promise<number> {
     }
 
     if (args.cmd === "print-url") {
-      const mode = args.mode ?? "dev";
-      const identity = resolveWorktreeIdentity(args.root);
-      const lease = readLease(identity.root, mode);
-      if (!lease) {
-        process.stderr.write(
-          `${CLI_NAME}: no ${mode} lease; run \`${CLI_NAME} acquire --mode=${mode}\` first\n`,
-        );
-        return 2;
-      }
-      process.stdout.write(`${urlFromLease(lease)}\n`);
-      return 0;
+      return cmdPrintUrl(args);
     }
 
     if (args.cmd === "status") {
-      const mode = args.mode ?? "dev";
-      const status = resolveDevStatus({ root: args.root, mode });
-      if (args.json) {
-        if (!status.ok) {
-          process.stdout.write(
-            `${JSON.stringify({ ok: false, reason: status.reason, mode: status.mode, root: status.root }, null, 2)}\n`,
-          );
-          return 2;
-        }
-        process.stdout.write(
-          `${JSON.stringify(
-            {
-              ok: true,
-              mode: status.mode,
-              root: status.root,
-              databaseUrl: status.databaseUrl,
-              envPath: status.envPath,
-              databaseName: status.lease.databaseName,
-              roleName: status.lease.roleName,
-              repoSlug: status.lease.repoSlug,
-              worktreeSlug: status.lease.worktreeSlug,
-              port: status.lease.port,
-              createdAt: status.lease.createdAt,
-            },
-            null,
-            2,
-          )}\n`,
-        );
-        return 0;
-      }
-      for (const line of formatDevStatus(status)) {
-        process.stdout.write(`${line}\n`);
-      }
-      return status.ok ? 0 : 2;
+      return cmdStatus(args);
     }
 
     if (args.cmd === "studio") {
-      const mode = args.mode ?? "dev";
-      const prefer = studioPrefer(args);
-      const status = resolveDevStatus({ root: args.root, mode });
-      if (!status.ok) {
-        for (const line of formatDevStatus(status)) {
-          process.stderr.write(`${line}\n`);
-        }
-        return 2;
-      }
-      const studio = detectStudio({ root: status.root, cwd: process.cwd(), prefer });
-      if (!studio) {
-        process.stderr.write(
-          `${CLI_NAME}: no Prisma or Drizzle Studio found (install prisma or drizzle-kit)\n`,
-        );
-        return 1;
-      }
-      process.stdout.write(
-        `${CLI_NAME}: opening ${studio.kind} studio (${studio.command} ${studio.args.join(" ")})\n`,
-      );
-      return await runStudio({ databaseUrl: status.databaseUrl, studio });
+      return await cmdStudio(args);
     }
 
     process.stderr.write(`${CLI_NAME}: unknown command ${args.cmd}\n`);

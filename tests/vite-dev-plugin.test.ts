@@ -41,16 +41,26 @@ function mockServer(root: string, bindCLIShortcuts: ReturnType<typeof vi.fn>) {
   return { server, info, warn, error };
 }
 
+const VITE8 = "8.2.0";
+const VITE7 = "7.3.5";
+
 test("viteBindsPluginShortcuts is false on Vite 7 and true on Vite 8", () => {
-  expect(viteBindsPluginShortcuts("7.3.5")).toBe(false);
-  expect(viteBindsPluginShortcuts("8.2.0")).toBe(true);
+  expect(viteBindsPluginShortcuts(VITE7)).toBe(false);
+  expect(viteBindsPluginShortcuts(VITE8)).toBe(true);
+});
+
+test("cedarPgDev does not bind shortcuts on Vite 7", () => {
+  const bindCLIShortcuts = vi.fn();
+  const { server } = mockServer("/tmp", bindCLIShortcuts);
+  invokeConfigureServer(cedarPgDev({}, VITE7), server as never);
+  expect(bindCLIShortcuts).not.toHaveBeenCalled();
 });
 
 test("cedarPgDev registers d and s shortcuts without printing help", () => {
   const bindCLIShortcuts = vi.fn();
   const { server } = mockServer("/tmp", bindCLIShortcuts);
 
-  const plugin = cedarPgDev();
+  const plugin = cedarPgDev({}, VITE8);
   expect(plugin.name).toBe("cedar-pg-dev");
   invokeConfigureServer(plugin, server as never);
 
@@ -74,7 +84,7 @@ test("cedarPgDev omits s shortcut when studio is false", () => {
     config: { root: "/tmp", logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } },
     bindCLIShortcuts,
   };
-  invokeConfigureServer(cedarPgDev({ studio: false }), server as never);
+  invokeConfigureServer(cedarPgDev({ studio: false }, VITE8), server as never);
   expect(shortcutsOf(bindCLIShortcuts).map((s) => s.key)).toEqual(["d"]);
 });
 
@@ -83,7 +93,7 @@ test("d shortcut warns when there is no lease", () => {
   const bindCLIShortcuts = vi.fn();
   const { server, info, warn } = mockServer(root, bindCLIShortcuts);
   try {
-    invokeConfigureServer(cedarPgDev({ root }), server as never);
+    invokeConfigureServer(cedarPgDev({ root }, VITE8), server as never);
     const d = shortcutsOf(bindCLIShortcuts).find((s) => s.key === "d");
     d!.action(server as never);
     expect(warn.mock.calls.some((c) => String(c[0]).includes("no dev lease"))).toBe(true);
@@ -115,7 +125,7 @@ test("d shortcut info-logs an existing lease", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
     };
     writeLease(lease);
-    invokeConfigureServer(cedarPgDev({ root }), server as never);
+    invokeConfigureServer(cedarPgDev({ root }, VITE8), server as never);
     const d = shortcutsOf(bindCLIShortcuts).find((s) => s.key === "d");
     d!.action(server as never);
     expect(info.mock.calls.some((c) => String(c[0]).includes("cpg_cedar_main_dev_abcd1234"))).toBe(
@@ -151,7 +161,7 @@ test("s shortcut warns when no ORM is installed", () => {
       pid: 1,
       createdAt: "2026-01-01T00:00:00.000Z",
     });
-    invokeConfigureServer(cedarPgDev({ root }), server as never);
+    invokeConfigureServer(cedarPgDev({ root }, VITE8), server as never);
     const s = shortcutsOf(bindCLIShortcuts).find((sc) => sc.key === "s");
     s!.action(server as never);
     expect(warn.mock.calls.some((c) => String(c[0]).includes("no Prisma or Drizzle"))).toBe(true);

@@ -41,14 +41,9 @@ export type { CreateAcquireTaskOptions, AcquireTaskContext } from "./adapters/ac
 export { parseLease, readLease, isOrphanLease, envFilePath } from "./core/lease.ts";
 export type { Lease } from "./core/lease.ts";
 
-/** Read-only status snapshot for CLI / scripting (Vite panel uses the same helpers). */
-export { resolveDevStatus, formatDevStatus } from "./core/status.ts";
-export type {
-  ResolveDevStatusOptions,
-  DevStatus,
-  DevStatusOk,
-  DevStatusMissing,
-} from "./core/status.ts";
+/** Read-only status snapshot for CLI / scripting (Vite panel uses the same helper). */
+export { resolveDevStatus } from "./core/status.ts";
+export type { ResolveDevStatusOptions, DevStatus } from "./core/status.ts";
 
 export {
   resolveAcquireSkip,

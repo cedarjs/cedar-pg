@@ -3,26 +3,34 @@ import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { runAttached } from "./child.ts";
 
 export type StudioKind = "prisma" | "drizzle";
+
+const STUDIO_PACKAGE: Record<StudioKind, string> = {
+  prisma: "prisma",
+  drizzle: "drizzle-kit",
+};
+
+const AUTO_ORDER: StudioKind[] = ["prisma", "drizzle"];
 
 export type DetectStudioOptions = {
   /** Worktree / lease root — directory walk stops here. */
   root: string;
   /** App package to start the walk (Nx `apps/…`). Defaults to `root`. */
   cwd?: string;
-  /** Force a kind; `false` disables. Omit to auto-detect (nearest package; prisma if both). */
-  prefer?: StudioKind | false;
+  /** Force a kind. Omit to auto-detect (nearest package; prisma if both). */
+  prefer?: StudioKind;
 };
 
 export type DetectedStudio = {
   kind: StudioKind;
-  /** Absolute path to the CLI entry, or null when falling back to npx. */
-  bin: string | null;
   command: string;
   args: string[];
   /** Directory to spawn in (where the ORM package / config was found). */
   cwd: string;
+  /** True when falling back to `npx`. */
+  shell: boolean;
 };
 
 type PkgJson = {
@@ -69,20 +77,23 @@ function tryResolveBin(dir: string, packageName: string): string | null {
   }
 }
 
-function prismaCommand(cwd: string): DetectedStudio {
-  const bin = tryResolveBin(cwd, "prisma");
-  if (bin) return { kind: "prisma", bin, command: bin, args: ["studio"], cwd };
-  return { kind: "prisma", bin: null, command: "npx", args: ["prisma", "studio"], cwd };
+function npxStudio(kind: StudioKind, cwd: string): DetectedStudio {
+  return {
+    kind,
+    command: "npx",
+    args: [STUDIO_PACKAGE[kind], "studio"],
+    cwd,
+    shell: true,
+  };
 }
 
-function drizzleCommand(cwd: string): DetectedStudio {
-  const bin = tryResolveBin(cwd, "drizzle-kit");
-  if (bin) return { kind: "drizzle", bin, command: bin, args: ["studio"], cwd };
-  return { kind: "drizzle", bin: null, command: "npx", args: ["drizzle-kit", "studio"], cwd };
-}
-
-function packagePresent(dir: string, name: string): boolean {
-  return hasDep(readPackageJson(dir), name) || Boolean(tryResolveBin(dir, name));
+/** Local bin, else declared dep → npx, else null. Resolves the bin at most once. */
+function studioAt(kind: StudioKind, dir: string): DetectedStudio | null {
+  const pkg = STUDIO_PACKAGE[kind];
+  const bin = tryResolveBin(dir, pkg);
+  if (bin) return { kind, command: bin, args: ["studio"], cwd: dir, shell: false };
+  if (hasDep(readPackageJson(dir), pkg)) return npxStudio(kind, dir);
+  return null;
 }
 
 function isInside(dir: string, ancestor: string): boolean {
@@ -104,31 +115,25 @@ function searchDirs(start: string, stop: string): string[] {
   }
 }
 
-function firstKind(dirs: string[], name: "prisma" | "drizzle-kit"): DetectedStudio | null {
-  for (const dir of dirs) {
-    if (packagePresent(dir, name)) {
-      return name === "prisma" ? prismaCommand(dir) : drizzleCommand(dir);
-    }
-  }
-  return null;
-}
-
-/** Detect Prisma Studio or Drizzle Kit Studio, walking from `cwd` up to the worktree `root`. */
+/**
+ * Detect Prisma Studio or Drizzle Kit Studio, walking from `cwd` up to the worktree `root`.
+ *
+ * Auto: nearest directory wins, prisma before drizzle in that directory; no npx fallback.
+ * Forced `prefer`: same nearest walk for that kind only, then npx at `cwd`.
+ */
 export function detectStudio(options: DetectStudioOptions): DetectedStudio | null {
-  if (options.prefer === false) return null;
-
   const stop = resolve(options.root);
   const start = resolve(options.cwd ?? options.root);
   const dirs = searchDirs(start, stop);
-
-  if (options.prefer === "prisma") return firstKind(dirs, "prisma") ?? prismaCommand(start);
-  if (options.prefer === "drizzle") return firstKind(dirs, "drizzle-kit") ?? drizzleCommand(start);
+  const kinds = options.prefer ? [options.prefer] : AUTO_ORDER;
 
   for (const dir of dirs) {
-    if (packagePresent(dir, "prisma")) return prismaCommand(dir);
-    if (packagePresent(dir, "drizzle-kit")) return drizzleCommand(dir);
+    for (const kind of kinds) {
+      const hit = studioAt(kind, dir);
+      if (hit) return hit;
+    }
   }
-  return null;
+  return options.prefer ? npxStudio(options.prefer, start) : null;
 }
 
 export type SpawnStudioOptions = {
@@ -142,39 +147,27 @@ function spawnStudio(options: SpawnStudioOptions, spawnOpts: SpawnOptions): Chil
     cwd: studio.cwd,
     env: { ...process.env, DATABASE_URL: databaseUrl },
     ...spawnOpts,
-    shell: studio.bin === null,
+    shell: studio.shell,
   });
 }
 
-export type OpenStudioHooks = {
-  onError?: (err: Error) => void;
-  onExit?: (code: number | null, signal: NodeJS.Signals | null) => void;
-};
-
 /**
- * Detached Studio for the Vite shortcut. Attach hooks before `unref` so spawn
- * failures are not uncaught (ENOENT would otherwise crash the dev server).
+ * Detached Studio for the Vite shortcut. Caller attaches `error` / `exit` on the
+ * returned process (spawn failures emit on a later tick).
  */
-export function openStudio(options: SpawnStudioOptions, hooks: OpenStudioHooks = {}): ChildProcess {
+export function openStudio(options: SpawnStudioOptions): ChildProcess {
   const child = spawnStudio(options, { detached: true, stdio: "ignore" });
-  child.once("error", (err) => {
-    hooks.onError?.(err);
-  });
-  child.once("exit", (code, signal) => {
-    hooks.onExit?.(code, signal);
-  });
   child.unref();
   return child;
 }
 
 /** Attached Studio for `cedarpg studio`: inherit stdio, resolve with the child's exit code. */
 export function runStudio(options: SpawnStudioOptions): Promise<number> {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawnStudio(options, { detached: false, stdio: "inherit" });
-    child.once("error", reject);
-    child.once("exit", (code, signal) => {
-      resolvePromise(signal ? 1 : (code ?? 1));
-    });
+  const { databaseUrl, studio } = options;
+  return runAttached(studio.command, studio.args, {
+    cwd: studio.cwd,
+    env: { ...process.env, DATABASE_URL: databaseUrl },
+    shell: studio.shell,
   });
 }
 
