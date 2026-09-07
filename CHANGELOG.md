@@ -2,8 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- Vite plugin `cedarPgDev()` (`@cedarjs/pg/vite-plus`): status panel on listen + shortcuts `d` (status) / `s` (Prisma or Drizzle Studio). Shortcuts bind only on Vite 8 / vite-plus (optional peer `vite >= 8`); Vite 7 / Cedar skips them so the listen panel still prints. Studio is detected from the Vite app root (or `cwd`) up to the worktree
+- CLI: `cedarpg status` (human + `--json`) and `cedarpg studio` (`--prisma` / `--drizzle`). Studio runs attached (inherit stdio, exit code) and detects from cwd up to the worktree. `--json` prints the `DevStatus` object
+- Public `resolveDevStatus` for scripting
+
 ### Fixed
 
+- `@cedarjs/pg/vite-plus` no longer statically imports `vite`, so the optional peer can be absent (smoke / Nx-only installs)
 - TEMPLATE `cloneWorkerDatabase`: default clone name is unique per call (`<worker>_<pid>_<time>`) so Jest `setupFiles` (module reload per file) no longer hits `database already exists` on `_c_<workerId>`
 - Ephemeral host: prune stale `/dev/shm/cedar-pg-*` / `pgserve-*` / `PostgreSQL.*` when the recipe port is dead; append remount/cleanup hints on Disk quota / ENOSPC / 53100
 
