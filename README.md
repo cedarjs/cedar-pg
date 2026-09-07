@@ -4,7 +4,7 @@ Worktree-isolated local Postgres for **Vite+**, **Nx**, and **CedarJS**, powered
 
 Published on npm as **`@cedarjs/pg`**.
 
-> **Alpha** (`0.2.0-alpha.0`): APIs may change. Install with the `alpha` dist-tag.
+> **Beta** (`0.2.0-beta.0`): APIs may still change. Install with the `beta` dist-tag.
 
 ## What you get (via autopg)
 
@@ -36,9 +36,9 @@ autopg runs embedded PostgreSQL 18 (not WASM) with real concurrent connections. 
 ## Install
 
 ```bash
-npm install -D @cedarjs/pg@alpha
-# or: pnpm add -D @cedarjs/pg@alpha
-# or: yarn add -D @cedarjs/pg@alpha
+npm install -D @cedarjs/pg@beta
+# or: pnpm add -D @cedarjs/pg@beta
+# or: yarn add -D @cedarjs/pg@beta
 ```
 
 ## Database names (observability)
@@ -87,7 +87,7 @@ vp pack
 
 # in your app / Cedar
 yarn add @cedarjs/pg@file:../cedar-pg
-# or: pnpm pack && yarn add ./cedarjs-pg-0.2.0-alpha.0.tgz
+# or: pnpm pack && yarn add ./cedarjs-pg-0.2.0-beta.0.tgz
 ```
 
 ## CLI
@@ -447,9 +447,9 @@ Worker adapters call `cloneFromTemplateIfNeeded` (shared skip policy via `runIfN
 | `CEDAR_PG_SKIP_POSTINSTALL=1`  | Skip autopg install hook                                                                                       |
 | `CEDAR_PG_INSTALL_AUTOPG=1`    | Under `CI=true`, run binary-only `ci-install-autopg.sh` from postinstall                                       |
 
-## Alpha caveats
+## Beta caveats
 
-- Public API may change before a stable `1.0.0` release (current publish is `0.2.0-alpha.x` on the `alpha` dist-tag).
+- Public API may change before a stable `1.0.0` release (current publish is `0.2.0-beta.x` on the `beta` dist-tag).
 - End-to-end Postgres flows assume a working local `autopg` host; unit tests do not start Postgres.
   CI runs `vp run smoke:pg` for Vitest/Jest adapters against real Postgres
   (ephemeral cold-start when the runner has no live host; attach-wins otherwise).

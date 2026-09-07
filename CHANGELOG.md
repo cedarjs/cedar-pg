@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.2.0-beta.0
+
+First beta cut (npm `beta` dist-tag). Host attach is TCP-only; Vite `cedarPgDev` panel + `cedarpg status` / `studio`.
+
 ### Added
 
 - Vite plugin `cedarPgDev()` (`@cedarjs/pg/vite-plus`): status panel on listen + shortcuts `d` (status) / `s` (Prisma or Drizzle Studio). Shortcuts bind only on Vite 8 / vite-plus (optional peer `vite >= 8`); Vite 7 / Cedar skips them so the listen panel still prints. Studio is detected from the Vite app root (or `cwd`) up to the worktree
@@ -20,11 +24,18 @@
 
 ### Changed
 
+- npm dist-tag is now `beta` (was `alpha`). Install with `@cedarjs/pg@beta`.
 - `parseHostStatus` / `discoverHost` (public) report the **registered** port and no longer throw on a stopped host — supervisor-specific `status` strings (pm2 `online` vs systemd-user / launchd) are not a liveness model. Probe TCP, or use `acquire`, before connecting.
 
 ### Docs
 
-- Nx canonical shape (`db:ready` + `cedarpg run --force`), Jest `CEDAR_PG_FORCE` + `setupFilesAfterEnv`, Yarn ignore-scripts CI recipe, `/dev/shm` troubleshooting, alpha caveat version
+- Nx canonical shape (`db:ready` + `cedarpg run --force`), Jest `CEDAR_PG_FORCE` + `setupFilesAfterEnv`, Yarn ignore-scripts CI recipe, `/dev/shm` troubleshooting, beta caveat version
+
+### Contracts (unchanged)
+
+- CLI binary: `cedarpg`; npm: `@cedarjs/pg` (`beta` tag)
+- State dirs: `.cedarpg` (worktree) and `~/.cedarpg/registry`
+- Password salt: opaque `cedar-pg\\0` + `roleName` (scheme v2)
 
 ## 0.2.0-alpha.0
 

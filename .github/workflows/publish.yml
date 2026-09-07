@@ -14,9 +14,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "npm dist-tag"
-        required: true
-        default: "alpha"
+        description: "npm dist-tag (empty = from package.json: alpha/beta/rc/… or latest)"
+        required: false
+        default: ""
 
 jobs:
   publish:
@@ -38,14 +38,13 @@ jobs:
 
       - name: Stage publish to npm
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          VERSION="$(node -p "require('./package.json').version")"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.tag }}" ]]; then
             TAG="${{ github.event.inputs.tag }}"
+          elif [[ "$VERSION" == *-* ]]; then
+            TAG="${VERSION#*-}"
+            TAG="${TAG%%.*}"
           else
-            VERSION="$(node -p "require('./package.json').version")"
-            if [[ "$VERSION" == *-* ]]; then
-              TAG="alpha"
-            else
-              TAG="latest"
-            fi
+            TAG="latest"
           fi
           vp pm stage publish --access public --tag "$TAG" --provenance
