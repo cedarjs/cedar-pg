@@ -11,14 +11,12 @@ import {
   type AutopgDiscovery,
 } from "./autopg.ts";
 
-/** How cedar-pg starts an autopg host when none is already live. */
+/** How cedar-pg brings up an autopg host when nothing is listening. */
 export type HostStartPolicy = "local" | "ephemeral";
 
-/** Opinionated install + postmaster argv for CI / ephemeral runners. */
 export type EphemeralHostRecipe = {
   dataDir: string;
   port: number;
-  installArgs: string[];
   postmasterArgs: string[];
 };
 
@@ -31,11 +29,29 @@ export type EphemeralRecipeContext = {
   port?: number;
 };
 
-/** Fixed CI TCP port so install registration and postmaster listen on the same port. */
 const EPHEMERAL_PORT = 55432;
 
-const OWNED_POSTMASTER_READY_MS = 30_000;
-const OWNED_POSTMASTER_POLL_MS = 200;
+const HOST_READY_MS = 30_000;
+const HOST_POLL_MS = 200;
+/** `pm2 restart` of an existing process is quick; 30s is only for first `install` / initdb. */
+const LOCAL_RESTART_READY_MS = 10_000;
+
+/**
+ * autopg verbs that can bring the *registered* local host up, cheapest fix first.
+ *
+ * `restart` exit 0 is not evidence of a listener: when pm2 is missing or does not
+ * list `autopg-server`, autopg still prints "respawned daemon" and returns 0.
+ * That is why every verb is followed by a TCP wait, not trusted on exit status.
+ *
+ * `install` covers a never-registered machine (postinstall ships the binary only)
+ * and a reboot whose pm2 list is empty (`pm2 start`). On an already-registered
+ * host it is a no-op for the server process but may `pm2 start` the autopg UI —
+ * so it runs only after `restart` failed to produce a listener.
+ */
+const LOCAL_START = [
+  { argv: ["restart"], readyMs: LOCAL_RESTART_READY_MS },
+  { argv: ["install"], readyMs: HOST_READY_MS },
+] as const;
 
 /** Soft minimum free bytes on /dev/shm before RAM-backed ephemeral start (warns only). */
 export const EPHEMERAL_SHM_MIN_FREE_BYTES = 512 * 1024 * 1024;
@@ -51,14 +67,14 @@ export const EPHEMERAL_SHM_HINT =
   "     rm -rf /dev/shm/cedar-pg-* /dev/shm/pgserve-* /dev/shm/PostgreSQL.*";
 
 /**
- * Resolve whether to start an owned ephemeral postmaster or use local pm2 install.
+ * Resolve how to start a host when none is listening.
  *
- * - `CEDAR_PG_EPHEMERAL_HOST=1` → ephemeral
- * - `CEDAR_PG_EPHEMERAL_HOST=0` → local (even when `CI=true`)
+ * - `CEDAR_PG_EPHEMERAL_HOST=1` → ephemeral owned postmaster
+ * - `CEDAR_PG_EPHEMERAL_HOST=0` → never own a postmaster, local autopg only (even in CI)
  * - unset + `CI=true` → ephemeral
  * - otherwise → local
  */
-export function resolveEphemeralHostPolicy(env: NodeJS.ProcessEnv = process.env): HostStartPolicy {
+export function resolveHostStartPolicy(env: NodeJS.ProcessEnv = process.env): HostStartPolicy {
   const force = env.CEDAR_PG_EPHEMERAL_HOST;
   if (force === "1") return "ephemeral";
   if (force === "0") return "local";
@@ -66,10 +82,6 @@ export function resolveEphemeralHostPolicy(env: NodeJS.ProcessEnv = process.env)
   return "local";
 }
 
-/**
- * Fixed CI recipe: shared `--port` on install + postmaster, `--no-pm2 --no-ui`,
- * and `--ram` + `/dev/shm/cedar-pg-<uid>` on Linux when shm exists.
- */
 export function ephemeralHostRecipe(ctx: EphemeralRecipeContext = {}): EphemeralHostRecipe {
   const platform = ctx.platform ?? process.platform;
   const shmAvailable = ctx.shmAvailable ?? (platform === "linux" && existsSync("/dev/shm"));
@@ -80,8 +92,6 @@ export function ephemeralHostRecipe(ctx: EphemeralRecipeContext = {}): Ephemeral
     ? `/dev/shm/cedar-pg-${uid}`
     : join(ctx.tmpDir ?? tmpdir(), "cedar-pg-host");
 
-  const installArgs = ["install", "--no-pm2", "--no-ui", "--port", String(port), "--data", dataDir];
-  // Always pass --port/--data/--socket-dir so postmaster matches the install record.
   const postmasterArgs = [
     "postmaster",
     ...(useRam ? ["--ram"] : []),
@@ -93,10 +103,9 @@ export function ephemeralHostRecipe(ctx: EphemeralRecipeContext = {}): Ephemeral
     dataDir,
   ];
 
-  return { dataDir, port, installArgs, postmasterArgs };
+  return { dataDir, port, postmasterArgs };
 }
 
-/** Discovery from the recipe port — TCP readiness is the authority, not `autopg status`. */
 export function discoveryFromRecipe(bin: string, recipe: EphemeralHostRecipe): AutopgDiscovery {
   return { port: recipe.port, adminUrl: adminUrlFor(recipe.port), bin };
 }
@@ -110,27 +119,24 @@ export function looksLikeShmSpaceError(text: string): boolean {
   return /Disk quota exceeded|No space left on device|ENOSPC|\b53100\b/i.test(text);
 }
 
-export function formatHostStartError(detail: string, useRamShm: boolean): string {
+export function formatHostStartError(detail: string, useRamShm = false): string {
   const hint = useRamShm && looksLikeShmSpaceError(detail) ? `\n${EPHEMERAL_SHM_HINT}` : "";
   return `Failed to start autopg host.\n${detail}\n${INSTALL_HINT}${hint}`;
 }
 
 /**
- * Remove leftover ephemeral data dirs under `/dev/shm` (and the recipe dataDir)
- * when the recipe port is not live. Safe for OOM-killed CI/cloud runs that leave
- * `cedar-pg-*` / `pgserve-*` / `PostgreSQL.*` filling tmpfs.
+ * Remove leftover ephemeral data dirs under `/dev/shm` (and the recipe dataDir).
+ * Safe for OOM-killed CI/cloud runs that leave `cedar-pg-*` / `pgserve-*` /
+ * `PostgreSQL.*` filling tmpfs.
  *
- * Does nothing when `portLive` is true (another host owns the port).
+ * Only called on ephemeral cold start, i.e. when the recipe port has no listener —
+ * never while a host owns those dirs.
  */
 export function pruneStaleEphemeralDataDirs(opts: {
   dataDir: string;
   /** Parent of RAM dirs; default `/dev/shm` when it exists. */
   shmRoot?: string;
-  /** When true, skip all deletes. */
-  portLive: boolean;
 }): string[] {
-  if (opts.portLive) return [];
-
   const removed: string[] = [];
   const tryRm = (path: string) => {
     if (!existsSync(path)) return;
@@ -167,7 +173,7 @@ export function pruneStaleEphemeralDataDirs(opts: {
 }
 
 /** Free bytes on `path`, or `null` if unavailable. */
-export function freeBytesOn(path: string): number | null {
+function freeBytesOn(path: string): number | null {
   try {
     const s = statfsSync(path);
     return Number(s.bavail) * Number(s.bsize);
@@ -176,15 +182,15 @@ export function freeBytesOn(path: string): number | null {
   }
 }
 
-function runInstall(bin: string, args: string[], useRamShm: boolean): void {
-  const install = spawnSync(bin, args, {
+/** Run a one-shot autopg verb. Returns failure detail, or `null` on exit 0. */
+function runAutopg(bin: string, argv: string[]): string | null {
+  const result = spawnSync(bin, argv, {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
-  if (install.status !== 0) {
-    const detail = `exit ${install.status}\n${install.stderr || install.stdout || ""}`.trim();
-    throw new Error(formatHostStartError(detail, useRamShm));
-  }
+  if (result.error) return result.error.message;
+  if (result.status === 0) return null;
+  return `exit ${result.status}\n${(result.stderr || result.stdout || "").trim()}`.trim();
 }
 
 /** True when something accepts TCP on 127.0.0.1:port (postmaster live, not just admin.json). */
@@ -200,7 +206,6 @@ function canConnect(port: number): Promise<boolean> {
   });
 }
 
-/** Kill a detached owned postmaster (process group when possible) and drop our handle. */
 function killOwnedChild(child: ChildProcess): void {
   const pid = child.pid;
   if (pid != null) {
@@ -217,62 +222,101 @@ function killOwnedChild(child: ChildProcess): void {
   child.unref();
 }
 
-export type WaitForOwnedPostmasterOptions = {
+export type WaitForListenerOptions = {
   port: number;
+  /** Total grace period; `0` (default) probes exactly once. */
   readyMs?: number;
   pollMs?: number;
   canConnect?: (port: number) => Promise<boolean>;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
-  /** Return an Error to fail fast (spawn error / early exit). */
+  /** Return an Error to abort early (spawn error / child exit). */
   failure?: () => Error | null;
 };
 
 /**
- * Poll until TCP accepts on port, or throw on timeout / {@link WaitForOwnedPostmasterOptions.failure}.
- * Exported for tests — the readiness seam for owned ephemeral start.
+ * The single liveness primitive: TCP accept on 127.0.0.1:port.
+ *
+ * Resolves `true` as soon as something is listening, `false` when the grace
+ * period expires, and throws only what {@link WaitForListenerOptions.failure}
+ * returns. Used for attach (one probe), local restart, and ephemeral start.
  */
-export async function waitForOwnedPostmaster(opts: WaitForOwnedPostmasterOptions): Promise<void> {
+export async function waitForListener(opts: WaitForListenerOptions): Promise<boolean> {
   const probe = opts.canConnect ?? canConnect;
   const now = opts.now ?? Date.now;
   const pause = opts.sleep ?? sleep;
-  const readyMs = opts.readyMs ?? OWNED_POSTMASTER_READY_MS;
-  const pollMs = opts.pollMs ?? OWNED_POSTMASTER_POLL_MS;
-  const deadline = now() + readyMs;
-  let lastDetail = "TCP not accepting";
+  const pollMs = opts.pollMs ?? HOST_POLL_MS;
+  const deadline = now() + (opts.readyMs ?? 0);
 
-  while (now() < deadline) {
+  for (;;) {
     const fail = opts.failure?.();
     if (fail) throw fail;
-    if (await probe(opts.port)) return;
-    lastDetail = `127.0.0.1:${opts.port} not accepting connections`;
+    if (await probe(opts.port)) return true;
+    if (now() >= deadline) return false;
     await pause(pollMs);
   }
-
-  throw new Error(
-    `Timed out waiting for autopg host after ${readyMs}ms.\n${lastDetail}\n${INSTALL_HINT}`,
-  );
 }
 
 /**
- * Install + detached postmaster with fully ignored stdio so the CI job owns lifetime
- * (caller exit must not close pipes under the daemon).
+ * Attach to the registered autopg host once TCP accepts on its port.
  *
- * Readiness is TCP accept on the recipe port — not `autopg status`, which succeeds
- * after `install --no-pm2` before postmaster is listening. On success, discovery is
- * recipe-derived (same port). On failure, the spawned child is killed.
+ * Registration is not liveness: a stopped pm2 host still reports a port, and
+ * attaching to it is the `ECONNREFUSED 127.0.0.1:25432` bug. `readyMs` > 0 is
+ * the grace period after asking autopg to start.
+ */
+async function attachLiveHost(bin: string, readyMs = 0): Promise<AutopgDiscovery | null> {
+  let discovered: AutopgDiscovery;
+  try {
+    discovered = discoverHost(bin);
+  } catch {
+    return null;
+  }
+  return (await waitForListener({ port: discovered.port, readyMs })) ? discovered : null;
+}
+
+/**
+ * Bring the user's registered autopg host up and attach to it — same port, same
+ * `~/.autopg/data`, still there after this process exits. cedar-pg never runs a
+ * second local Postgres.
+ */
+async function startLocalHost(bin: string, registeredPort?: number): Promise<AutopgDiscovery> {
+  const failures: string[] = [];
+
+  for (const { argv, readyMs } of LOCAL_START) {
+    const label = `autopg ${argv.join(" ")}`;
+    const failure = runAutopg(bin, [...argv]);
+    if (failure) {
+      failures.push(`${label}: ${failure}`);
+      continue;
+    }
+    const attached = await attachLiveHost(bin, readyMs);
+    if (attached) return attached;
+    failures.push(`${label}: no listener within ${readyMs}ms`);
+  }
+
+  const where =
+    registeredPort != null
+      ? `autopg host is registered on 127.0.0.1:${registeredPort} but nothing is listening.\n`
+      : "";
+  throw new Error(formatHostStartError(`${where}${failures.join("\n")}`));
+}
+
+/**
+ * Ephemeral host owned by this process/job: detached `autopg postmaster` with
+ * fully ignored stdio (caller exit must not close pipes under the daemon).
+ *
+ * Never runs `autopg install` — that rewrites `~/.autopg/admin.json` and fails
+ * with `supervisor mismatch` next to a local pm2 install. Reuses a listener
+ * already on the recipe port, and prunes stale RAM dirs before a cold start.
  */
 async function startEphemeralHost(bin: string): Promise<AutopgDiscovery> {
   const recipe = ephemeralHostRecipe();
+  if (await canConnect(recipe.port)) return discoveryFromRecipe(bin, recipe);
+
   const useRamShm = recipe.postmasterArgs.includes("--ram");
-  const portLive = await canConnect(recipe.port);
+  pruneStaleEphemeralDataDirs({ dataDir: recipe.dataDir });
 
-  pruneStaleEphemeralDataDirs({
-    dataDir: recipe.dataDir,
-    portLive,
-  });
-
-  if (useRamShm && !portLive) {
+  if (useRamShm) {
     const free = freeBytesOn("/dev/shm");
     if (free != null && free < EPHEMERAL_SHM_MIN_FREE_BYTES) {
       process.stderr.write(
@@ -284,79 +328,61 @@ async function startEphemeralHost(bin: string): Promise<AutopgDiscovery> {
   }
 
   mkdirSync(recipe.dataDir, { recursive: true });
-  runInstall(bin, recipe.installArgs, useRamShm);
 
-  const state: {
-    exit: { code: number | null; signal: NodeJS.Signals | null } | null;
-    spawnError: Error | null;
-  } = { exit: null, spawnError: null };
-
-  const child = spawn(bin, recipe.postmasterArgs, {
-    detached: true,
-    // Fully ignore stdio so unref'd postmaster is not tied to this process's pipes.
-    stdio: "ignore",
-  });
+  const child = spawn(bin, recipe.postmasterArgs, { detached: true, stdio: "ignore" });
+  let died: Error | null = null;
   child.on("error", (err) => {
-    state.spawnError = err;
+    died = new Error(
+      formatHostStartError(`Failed to spawn autopg postmaster.\n${err.message}`, useRamShm),
+    );
   });
   child.on("exit", (code, signal) => {
-    state.exit = { code, signal };
+    died ??= new Error(
+      formatHostStartError(
+        `autopg postmaster exited before ready (code=${code}, signal=${signal}).`,
+        useRamShm,
+      ),
+    );
   });
 
   try {
-    await waitForOwnedPostmaster({
+    const listening = await waitForListener({
       port: recipe.port,
-      failure: () => {
-        if (state.spawnError) {
-          return new Error(
-            formatHostStartError(
-              `Failed to spawn autopg postmaster.\n${state.spawnError.message}`,
-              useRamShm,
-            ),
-          );
-        }
-        if (state.exit) {
-          return new Error(
-            formatHostStartError(
-              `autopg postmaster exited before ready (code=${state.exit.code}, signal=${state.exit.signal}).`,
-              useRamShm,
-            ),
-          );
-        }
-        return null;
-      },
+      readyMs: HOST_READY_MS,
+      failure: () => died,
     });
+    if (!listening) {
+      throw new Error(
+        formatHostStartError(
+          `autopg postmaster did not accept 127.0.0.1:${recipe.port} within ${HOST_READY_MS}ms.`,
+          useRamShm,
+        ),
+      );
+    }
   } catch (err) {
     killOwnedChild(child);
     throw err;
   }
 
-  // Success: job owns lifetime — drop our handle without killing.
+  // Success: the process/job owns lifetime — drop our handle without killing.
   child.unref();
   return discoveryFromRecipe(bin, recipe);
 }
 
 /**
- * Ensure the host postmaster is up.
- *
- * - Attaches when `autopg status --json` shows a live host.
- * - Otherwise starts from {@link resolveEphemeralHostPolicy}: local pm2 `install`,
- *   or opinionated ephemeral (`--no-pm2 --no-ui` + detached postmaster).
- * - CI job owns ephemeral postmaster lifetime on success (no cedar-pg host dispose).
- * - Failed ephemeral start kills the spawned child so ensure is atomic for the caller.
- * - Before ephemeral cold-start, prunes stale `/dev/shm` leftovers when the recipe port is dead.
+ * Attach to a listening autopg host, else start one per
+ * {@link resolveHostStartPolicy}. Internal: callers use `acquire` / `adminUrl`.
  */
 export async function ensureHostRunning(bin = requireAutopgBin()): Promise<AutopgDiscovery> {
+  let registered: AutopgDiscovery | null = null;
   try {
-    return discoverHost(bin);
+    registered = discoverHost(bin);
   } catch {
-    // status failed — start host per policy
+    // no registration — local recovery may `install`
   }
+  if (registered && (await waitForListener({ port: registered.port }))) return registered;
 
-  if (resolveEphemeralHostPolicy() === "ephemeral") {
-    return startEphemeralHost(bin);
-  }
-
-  runInstall(bin, ["install"], false);
-  return discoverHost(bin);
+  return resolveHostStartPolicy() === "ephemeral"
+    ? startEphemeralHost(bin)
+    : startLocalHost(bin, registered?.port);
 }

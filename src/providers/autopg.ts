@@ -49,20 +49,23 @@ export function requireAutopgBin(): string {
 }
 
 /**
- * Parse `autopg status --json` output. Requires a numeric port and running !== false.
+ * Parse `autopg status --json` → the **registered** port. Throws only when the
+ * output is not autopg status JSON.
+ *
+ * Registration is not liveness: autopg reports a port for a stopped host too,
+ * and its `status` string is supervisor-specific (pm2 `online`, systemd-user /
+ * launchd differ). Liveness is a TCP accept on the port, proven by the caller —
+ * `acquire` does that before it connects.
  */
 export function parseHostStatus(json: string): { port: number } {
-  let parsed: { port?: unknown; running?: unknown };
+  let parsed: { port?: unknown };
   try {
-    parsed = JSON.parse(json) as { port?: unknown; running?: unknown };
+    parsed = JSON.parse(json) as typeof parsed;
   } catch {
     throw new Error(`autopg status --json returned invalid JSON.\n${INSTALL_HINT}`);
   }
   if (typeof parsed.port !== "number") {
     throw new Error(`autopg status --json missing numeric port.\n${INSTALL_HINT}`);
-  }
-  if (parsed.running === false) {
-    throw new Error(`autopg host is not running.\n${INSTALL_HINT}`);
   }
   return { port: parsed.port };
 }
@@ -86,7 +89,9 @@ export function adminUrlFor(port: number, env: NodeJS.ProcessEnv = process.env):
 }
 
 /**
- * Discover a live autopg host via `autopg status --json`. Throws if the host is not proven live.
+ * Discover the registered autopg host (port + admin URL) via `autopg status --json`.
+ * Throws when autopg cannot be queried; does **not** prove a listener — probe TCP
+ * (or use `acquire`, which does) before connecting.
  */
 export function discoverHost(bin = requireAutopgBin()): AutopgDiscovery {
   let status: string;

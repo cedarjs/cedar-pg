@@ -10,9 +10,17 @@
 
 ### Fixed
 
+- Attach liveness is a TCP accept, never `autopg status` alone: `cedarpg acquire` no longer connects to a registered-but-stopped host (`ECONNREFUSED 127.0.0.1:25432`).
+- Local host recovery brings the **registered** autopg host back: `autopg restart`, then `autopg install` if still no listener, then attach once TCP accepts (error names the registered port and lists what was tried). `restart` exiting 0 is not treated as live. Same port and `~/.autopg/data`; cedar-pg never starts a second local Postgres.
+- `CEDAR_PG_EPHEMERAL_HOST=0` now has one meaning: never start an owned postmaster (even under `CI=true`) — local autopg host only, or fail.
+- Ephemeral host: start detached `autopg postmaster` only. Do not run `install --no-pm2` (that rewrites `~/.autopg/admin.json` and fails with `supervisor mismatch` next to a local pm2 install).
 - `@cedarjs/pg/vite-plus` no longer statically imports `vite`, so the optional peer can be absent (smoke / Nx-only installs)
 - TEMPLATE `cloneWorkerDatabase`: default clone name is unique per call (`<worker>_<pid>_<time>`) so Jest `setupFiles` (module reload per file) no longer hits `database already exists` on `_c_<workerId>`
 - Ephemeral host: prune stale `/dev/shm/cedar-pg-*` / `pgserve-*` / `PostgreSQL.*` when the recipe port is dead; append remount/cleanup hints on Disk quota / ENOSPC / 53100
+
+### Changed
+
+- `parseHostStatus` / `discoverHost` (public) report the **registered** port and no longer throw on a stopped host — supervisor-specific `status` strings (pm2 `online` vs systemd-user / launchd) are not a liveness model. Probe TCP, or use `acquire`, before connecting.
 
 ### Docs
 
