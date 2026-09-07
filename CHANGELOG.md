@@ -6,6 +6,10 @@
 
 First beta cut (npm `beta` dist-tag). Host attach is TCP-only; Vite `cedarPgDev` panel + `cedarpg status` / `studio`.
 
+### Breaking
+
+- `parseHostStatus` / `discoverHost` (public) report the **registered** port and no longer throw on a stopped host (`running: false`). Supervisor `status` strings (pm2 `online` vs systemd-user / launchd) are not a liveness model. Probe TCP, or use `acquire`, before connecting.
+
 ### Added
 
 - Vite plugin `cedarPgDev()` (`@cedarjs/pg/vite-plus`): status panel on listen + shortcuts `d` (status) / `s` (Prisma or Drizzle Studio). Shortcuts bind only on Vite 8 / vite-plus (optional peer `vite >= 8`); Vite 7 / Cedar skips them so the listen panel still prints. Studio is detected from the Vite app root (or `cwd`) up to the worktree
@@ -19,21 +23,20 @@ First beta cut (npm `beta` dist-tag). Host attach is TCP-only; Vite `cedarPgDev`
 - `CEDAR_PG_EPHEMERAL_HOST=0` now has one meaning: never start an owned postmaster (even under `CI=true`) — local autopg host only, or fail.
 - Ephemeral host: start detached `autopg postmaster` only. Do not run `install --no-pm2` (that rewrites `~/.autopg/admin.json` and fails with `supervisor mismatch` next to a local pm2 install).
 - `@cedarjs/pg/vite-plus` no longer statically imports `vite`, so the optional peer can be absent (smoke / Nx-only installs)
-- TEMPLATE `cloneWorkerDatabase`: default clone name is unique per call (`<worker>_<pid>_<time>`) so Jest `setupFiles` (module reload per file) no longer hits `database already exists` on `_c_<workerId>`
+- TEMPLATE `cloneWorkerDatabase`: process-scope memo on `globalThis` so Jest `setupFiles` (module reload per file) reuses one clone per worker instead of hitting `database already exists` on `_c_<workerId>`. Default name is still `JEST_WORKER_ID` / `VITEST_POOL_ID` / pid — unique `pid_time` names are `cloneFromTemplate` when `name` is omitted.
 - Ephemeral host: prune stale `/dev/shm/cedar-pg-*` / `pgserve-*` / `PostgreSQL.*` when the recipe port is dead; append remount/cleanup hints on Disk quota / ENOSPC / 53100
 
 ### Changed
 
 - npm dist-tag is now `beta` (was `alpha`). Install with `@cedarjs/pg@beta`.
-- `parseHostStatus` / `discoverHost` (public) report the **registered** port and no longer throw on a stopped host — supervisor-specific `status` strings (pm2 `online` vs systemd-user / launchd) are not a liveness model. Probe TCP, or use `acquire`, before connecting.
 
 ### Docs
 
-- Nx canonical shape (`db:ready` + `cedarpg run --force`), Jest `CEDAR_PG_FORCE` + `setupFilesAfterEnv`, Yarn ignore-scripts CI recipe, `/dev/shm` troubleshooting, beta caveat version
+- Nx canonical shape (`db:ready` + `cedarpg run --force`), Jest `CEDAR_PG_FORCE` + `setupFilesAfterEnv`, Yarn ignore-scripts CI recipe, `/dev/shm` troubleshooting, README install/`@beta` caveats
 
 ### Contracts (unchanged)
 
-- CLI binary: `cedarpg`; npm: `@cedarjs/pg` (`beta` tag)
+- CLI binary: `cedarpg`; npm: `@cedarjs/pg`
 - State dirs: `.cedarpg` (worktree) and `~/.cedarpg/registry`
 - Password salt: opaque `cedar-pg\\0` + `roleName` (scheme v2)
 
