@@ -220,6 +220,9 @@ importers:
       typescript:
         specifier: ^5.8.3
         version: 5.9.3
+      vite:
+        specifier: ^8.2.0
+        version: 8.2.0(@types/node@22.20.1)
       vite-plus:
         specifier: ^0.2.4
         version: 0.2.7(@types/node@22.20.1)(typescript@5.9.3)(vite@8.2.0(@types/node@22.20.1))

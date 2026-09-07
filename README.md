@@ -99,6 +99,8 @@ cedarpg run --mode=dev -- yarn tsx scripts/apiServer/dev.ts
 cedarpg run --mode=test -- vitest run
 cedarpg dispose --mode=test
 cedarpg print-url --mode=dev
+cedarpg status --mode=dev          # lease name, port, DATABASE_URL, env path
+cedarpg studio --mode=dev          # Prisma/Drizzle Studio (--prisma / --drizzle; from cwd)
 cedarpg gc   # drop DBs whose worktree root is gone (uses ~/.cedarpg/registry)
 ```
 
@@ -170,9 +172,10 @@ Fallbacks when you cannot wrap with `run`: `loadDevEnv({ overwrite: true })` or
 ```ts
 // vite.config.ts
 import { defineConfig } from "vite-plus";
-import { cedarPgTasks } from "@cedarjs/pg/vite-plus";
+import { cedarPgTasks, cedarPgDev } from "@cedarjs/pg/vite-plus";
 
 export default defineConfig({
+  plugins: [cedarPgDev()],
   run: {
     tasks: {
       ...cedarPgTasks(),
@@ -190,6 +193,20 @@ export default defineConfig({
   },
 });
 ```
+
+`cedarPgDev()` does **not** acquire — keep `dependsOn: ['db:acquire']`. On listen it prints a
+status panel (TTY, non-CI). Vite CLI shortcuts (`key` then Enter; also listed under `h`):
+
+| Key | Action                                                                 |
+| --- | ---------------------------------------------------------------------- |
+| `d` | Reprint cedar-pg status (name, port, `DATABASE_URL`, env file)         |
+| `s` | Open Prisma Studio or Drizzle Kit Studio with the lease `DATABASE_URL` |
+
+Options: `cedarPgDev({ mode, root, cwd, studio: "prisma" \| "drizzle" \| false })`. Studio walks
+from `cwd` (default Vite `config.root`) up to the worktree so an Nx `apps/…` package is found
+without moving the lease. `prisma` wins when both ORMs sit in the same package. Shortcuts bind on
+Vite 8 / vite-plus. Vite 7 / Cedar prints the listen panel only. Use `cedarpg status` /
+`cedarpg studio` for Nx and other non-Vite hosts.
 
 ## Vitest / Jest adapters
 
