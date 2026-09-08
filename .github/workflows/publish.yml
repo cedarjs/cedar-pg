@@ -14,9 +14,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "npm dist-tag"
-        required: true
-        default: "alpha"
+        description: "npm dist-tag (empty = from package.json: alpha/beta/rc/… or latest)"
+        required: false
+        default: ""
 
 jobs:
   publish:
@@ -37,15 +37,29 @@ jobs:
       - run: vp run smoke
 
       - name: Stage publish to npm
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            TAG="${{ github.event.inputs.tag }}"
+          VERSION="$(node -p "require('./package.json').version")"
+          CONFIG_TAG="$(node -p "require('./package.json').publishConfig?.tag ?? 'latest'")"
+          # 0.2.0-beta.0 → beta; 1.0.0-rc.1 → rc; 1.0.0 → latest
+          DERIVED_TAG="$(node -p 'const pre = require("./package.json").version.split("-")[1]; pre ? pre.split(".")[0] : "latest"')"
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && -n "$INPUT_TAG" ]]; then
+            TAG="$INPUT_TAG"
           else
-            VERSION="$(node -p "require('./package.json').version")"
-            if [[ "$VERSION" == *-* ]]; then
-              TAG="alpha"
-            else
-              TAG="latest"
+            TAG="$DERIVED_TAG"
+            if [[ "$CONFIG_TAG" != "$DERIVED_TAG" ]]; then
+              echo "publishConfig.tag ($CONFIG_TAG) != derived tag ($DERIVED_TAG) from $VERSION" >&2
+              exit 1
             fi
           fi
+
+          if [[ "$VERSION" == *-* && "$TAG" == "latest" ]]; then
+            echo "refusing to publish prerelease $VERSION as dist-tag latest" >&2
+            exit 1
+          fi
+
+          echo "Staging $VERSION with npm dist-tag $TAG"
           vp pm stage publish --access public --tag "$TAG" --provenance

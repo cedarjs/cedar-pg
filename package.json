@@ -1,6 +1,6 @@
 {
   "name": "@cedarjs/pg",
-  "version": "0.2.0-alpha.0",
+  "version": "0.2.0-beta.0",
   "description": "Worktree-isolated local Postgres for Vite+, Nx, and CedarJS (via autopg)",
   "keywords": [
     "autopg",
@@ -92,7 +92,7 @@
   },
   "publishConfig": {
     "access": "public",
-    "tag": "alpha"
+    "tag": "beta"
   },
   "scripts": {
     "build": "vp pack",

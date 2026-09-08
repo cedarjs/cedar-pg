@@ -15,7 +15,7 @@ Worktree-isolated local Postgres for Vite+, Nx, and CedarJS, on top of [autopg](
 
 Mental model: autopg is the host; cedar-pg is the lease + naming + policy layer so parallel git worktrees do not share one DB.
 
-Published npm package: `@cedarjs/pg` (CLI binary: `cedarpg`). Alpha (`0.2.0-alpha.x`, `alpha` dist-tag) — public APIs may still change; treat renames and export surface as intentional product decisions, not drive-by churn.
+Published npm package: `@cedarjs/pg` (CLI binary: `cedarpg`). Beta (`0.2.0-beta.x`, `beta` dist-tag) — public APIs may still change; treat renames and export surface as intentional product decisions, not drive-by churn.
 
 ## Commands
 
@@ -57,7 +57,7 @@ Pack entries and npm `exports` are declared in `vite.config.ts` `pack.entry` and
 
 ## Frozen product contracts
 
-Do not casually change these without a changelog + alpha migration note:
+Do not casually change these without a changelog + migration note:
 
 | Contract           | Value                                          | Notes                                                                              |
 | ------------------ | ---------------------------------------------- | ---------------------------------------------------------------------------------- |
@@ -117,7 +117,7 @@ Nx canonical consumer shape: one `db:ready` / `createAcquireTask`, then wrap chi
 - Published files: `dist/`, `scripts/autopg-version`, `scripts/ci-install-autopg.sh`, `scripts/postinstall.js` (see `package.json` `files`).
 - Dual ESM/CJS + dts via `vp pack`; keep default export shapes stable for Jest CJS `require.resolve`.
 - `postinstall` must stay safe when scripts are disabled; document Action / `ci-install-autopg.sh` path for Yarn ignore-scripts consumers.
-- Changelog: user-visible API, CLI, env, and contract changes under `CHANGELOG.md` Unreleased (or the next alpha section).
+- Changelog: user-visible API, CLI, env, and contract changes under `CHANGELOG.md` Unreleased (or the next release section).
 
 ---
 
