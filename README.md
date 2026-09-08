@@ -1,94 +1,61 @@
 # cedar-pg
 
-Worktree-isolated local Postgres for **Vite+**, **Nx**, and **CedarJS**, powered by [autopg](https://github.com/automagik-dev/autopg).
+Worktree-isolated local Postgres for Vite+, Nx, and CedarJS. The host is [autopg](https://github.com/automagik-dev/autopg) (embedded PostgreSQL 18). cedar-pg creates one database and role per git worktree so parallel checkouts do not share a DB.
 
-Published on npm as **`@cedarjs/pg`**.
+Published as `@cedarjs/pg`. CLI: `cedarpg`. Beta (`0.2.0-beta.0`, `beta` dist-tag). Public APIs may still change.
 
-> **Beta** (`0.2.0-beta.0`): APIs may still change. Install with the `beta` dist-tag.
-
-## What you get (via autopg)
-
-autopg runs embedded PostgreSQL 18 (not WASM) with real concurrent connections. No credentials, zero config, and databases are provisioned on first use. Any client works (`psql`, `node-postgres`, Prisma, Drizzle, TypeORM).
-
-### Development & testing
-
-| Use case                | What you get                               |
-| ----------------------- | ------------------------------------------ |
-| **Local development**   | PostgreSQL without Docker                  |
-| **Integration testing** | Real PostgreSQL, not mocks                 |
-| **CI/CD pipelines**     | Fresh databases per test run               |
-| **E2E testing**         | Isolated database for Playwright / Cypress |
-
-## What cedar-pg adds
-
-**cedar-pg** gives each **git worktree** its own database and role on that autopg host (readable names, leases, teardown) so parallel checkouts do not share one DB:
-
-- **1 database per git worktree** (visible in `\l` as `cpg_…`)
-- **dev** DBs persist across restarts; **test** DBs drop on dispose
-- First-class **Vite+ Task** + **Nx** / Vitest / Jest adapters
-- `postinstall` ensures the pinned `autopg` binary when missing
-
-| Layer        | Responsibility                                                      |
-| ------------ | ------------------------------------------------------------------- |
-| **autopg**   | Embedded Postgres host (concurrent, zero-config, auto-provision)    |
-| **cedar-pg** | Per-worktree `CREATE DATABASE` / role, `DATABASE_URL`, dispose + GC |
+| Layer    | Owns                                                                              |
+| -------- | --------------------------------------------------------------------------------- |
+| autopg   | Postgres process, port, concurrent connections                                    |
+| cedar-pg | Per-worktree `CREATE DATABASE` and role, lease files, `DATABASE_URL`, dispose, GC |
 
 ## Install
 
+Node `>=24`.
+
 ```bash
 npm install -D @cedarjs/pg@beta
-# or: pnpm add -D @cedarjs/pg@beta
-# or: yarn add -D @cedarjs/pg@beta
+# pnpm add -D @cedarjs/pg@beta
+# yarn add -D @cedarjs/pg@beta
 ```
 
-## Database names (observability)
+`postinstall` installs the pinned autopg binary when it is missing. The pin is `scripts/autopg-version`. To bump autopg, change that file.
 
-```text
-cpg_<repo>_<worktree>_<mode>_<pathHash8>
-```
-
-Examples:
-
-| Name                                | Meaning                    |
-| ----------------------------------- | -------------------------- |
-| `cpg_cedar_cedar_dev_a1b2c3d4`      | main `cedar` checkout, dev |
-| `cpg_cedar_feat_auth_test_e5f67890` | worktree `feat-auth`, test |
-
-## Prerequisites
-
-A running [autopg](https://github.com/automagik-dev/autopg) host (installed automatically by `postinstall`, or manually).
-The release pin lives in **`scripts/autopg-version`** (single source of truth for postinstall, CI binary install, and docs). Bump that file to upgrade:
+To install the host by hand (local, non-CI; upstream `install.sh` may use pm2):
 
 ```bash
-# local / non-CI (upstream install.sh; may use pm2)
 VER=$(tr -d '[:space:]' < scripts/autopg-version)
 curl -fsSL "https://raw.githubusercontent.com/automagik-dev/autopg/${VER}/install.sh" \
   | AUTOPG_VERSION="$VER" bash
 ```
 
-Typical flow: `autopg daemon` (or your usual host install) once per machine → `cedarpg acquire` per worktree → connect with the printed `DATABASE_URL`.
-
-## Develop this package (Vite+)
+Once per machine, run the host (`autopg daemon`, or your usual install). Then per worktree:
 
 ```bash
-vp install
-vp check
-vp test
-vp pack            # → dist/ (dts + esm + cjs)
-vp run smoke       # build → npm-pack tarball → install + resolve exports
-vp run smoke:pg    # pack → Vitest + Jest adapters against real ephemeral Postgres
+cedarpg acquire --mode=dev
 ```
 
-## Local consume (without npm)
+Connect with the printed `DATABASE_URL`.
+
+From another checkout of this repo, pack first, then depend on the build:
 
 ```bash
-# in this repo
 vp pack
-
-# in your app / Cedar
-yarn add @cedarjs/pg@file:../cedar-pg
-# or: pnpm pack && yarn add ./cedarjs-pg-0.2.0-beta.0.tgz
+# in the app: yarn add @cedarjs/pg@file:../cedar-pg
+# or install the tarball vp pack writes (name includes the version in package.json)
 ```
+
+## Acquire a database
+
+`dev` databases persist across restarts. `test` databases drop on `dispose`.
+
+Names look like this (visible in `psql` `\l`):
+
+```text
+cpg_<repo>_<worktree>_<mode>_<pathHash8>
+```
+
+Worktree state lives in `.cedarpg`. Import `STATE_DIRNAME` instead of hardcoding that string. `gc` uses `~/.cedarpg/registry`.
 
 ## CLI
 
@@ -99,75 +66,18 @@ cedarpg run --mode=dev -- yarn tsx scripts/apiServer/dev.ts
 cedarpg run --mode=test -- vitest run
 cedarpg dispose --mode=test
 cedarpg print-url --mode=dev
-cedarpg status --mode=dev          # lease name, port, DATABASE_URL, env path
-cedarpg studio --mode=dev          # Prisma/Drizzle Studio (--prisma / --drizzle; from cwd)
-cedarpg gc   # drop DBs whose worktree root is gone (uses ~/.cedarpg/registry)
+cedarpg status --mode=dev
+cedarpg studio --mode=dev          # Prisma or Drizzle Studio (--prisma / --drizzle)
+cedarpg gc                         # drop DBs whose worktree root is gone
 ```
 
-`cedarpg run` acquires (or attaches the lease), force-sets `DATABASE_URL` (and
-`TEST_DATABASE_URL` in test mode) in the **child** process, then execs the command.
-Use it for Nx / e2e / API wrappers — local `.env` URLs do not win inside the child.
+`status` and `studio` are read-only. They do not acquire. `studio` walks from cwd up to the worktree.
 
-## Nx consumer adapter
+`cedarpg run` acquires or attaches the lease, then execs the command. The child always gets `DATABASE_URL` from the lease. In test mode it also gets `TEST_DATABASE_URL`. `--force` only sets `CEDAR_PG_FORCE=1`, so nested adapters do not treat an ambient URL as an escape hatch.
 
-Nx `dependsOn` alone does not forward env from an acquire task into dependents
-(Vite+ `env: [...]` does). **Canonical Nx shape:**
+If two targets run `cedarpg acquire` or `cedarpg run` on the same worktree, role and database DDL can race. Use one acquire, then `run` wrappers.
 
-1. `createAcquireTask` (or `db:ready`) — acquire + app migrate once
-2. Wrap API/dev/e2e children with `cedarpg run --mode=dev --force -- <cmd>` so the child gets the worktree `DATABASE_URL` even when `.env` has a real URL
-
-Do **not** run concurrent `cedarpg acquire` / `run` on the same worktree from multiple Nx targets (role/DB DDL races). Prefer one `db:ready` dependency, then `run` wrappers.
-
-Secondary: point Nx `envFile` at `.cedarpg/<mode>.env` after acquire (still loses to ambient `.env` unless you also force / overwrite).
-
-```ts
-import { cedarPgNxTargets, cedarPgRunCommand, relativeEnvFile } from "@cedarjs/pg/nx";
-
-cedarPgNxTargets();
-// { "db:acquire": { command: "cedarpg acquire --mode=dev", cache: false }, … }
-
-cedarPgRunCommand("dev", "yarn tsx scripts/apiServer/dev.ts");
-// "cedarpg run --mode=dev -- yarn tsx scripts/apiServer/dev.ts"
-
-relativeEnvFile("dev"); // ".cedarpg/dev.env"
-```
-
-```json
-{
-  "targets": {
-    "db:ready": { "command": "tsx tools/db-ready.ts", "cache": false },
-    "dev": {
-      "dependsOn": ["db:ready"],
-      "command": "cedarpg run --mode=dev --force -- yarn tsx scripts/apiServer/dev.ts"
-    },
-    "serve": {
-      "dependsOn": ["db:ready"],
-      "command": "cedarpg run --mode=dev --force -- node dist/server.js"
-    }
-  }
-}
-```
-
-For a db:ready-style migrate hook (same compose shape as Jest `createGlobalSetup`):
-
-```ts
-// tools/db-ready.ts
-import { createAcquireTask } from "@cedarjs/pg";
-
-await createAcquireTask({
-  mode: "dev",
-  // Apps with a real .env DATABASE_URL almost always need this
-  force: true,
-  afterAcquire: async ({ databaseUrl }) => {
-    // prisma migrate deploy / drizzle push / …
-  },
-})();
-```
-
-Fallbacks when you cannot wrap with `run`: `loadDevEnv({ overwrite: true })` or
-`import "@cedarjs/pg/dev-env"`. Absolute path helper: `envFilePath(root, mode)`.
-
-## Vite+ consumer adapter
+## Vite+
 
 ```ts
 // vite.config.ts
@@ -194,21 +104,75 @@ export default defineConfig({
 });
 ```
 
-`cedarPgDev()` does **not** acquire — keep `dependsOn: ['db:acquire']`. On listen it prints a
-status panel (TTY, non-CI). Vite CLI shortcuts (`key` then Enter; also listed under `h`):
+`cedarPgDev()` does not acquire. Keep `dependsOn: ["db:acquire"]`. On listen it prints a status panel (TTY, non-CI). Vite CLI shortcuts (`key` then Enter; also listed under `h`):
 
 | Key | Action                                                                 |
 | --- | ---------------------------------------------------------------------- |
-| `d` | Reprint cedar-pg status (name, port, `DATABASE_URL`, env file)         |
+| `d` | Reprint status (name, port, `DATABASE_URL`, env file)                  |
 | `s` | Open Prisma Studio or Drizzle Kit Studio with the lease `DATABASE_URL` |
 
-Options: `cedarPgDev({ mode, root, cwd, studio: "prisma" \| "drizzle" \| false })`. Studio walks
-from `cwd` (default Vite `config.root`) up to the worktree so an Nx `apps/…` package is found
-without moving the lease. `prisma` wins when both ORMs sit in the same package. Shortcuts bind on
-Vite 8 / vite-plus. Vite 7 / Cedar prints the listen panel only. Use `cedarpg status` /
-`cedarpg studio` for Nx and other non-Vite hosts.
+Options: `cedarPgDev({ mode, root, cwd, studio: "prisma" | "drizzle" | false })`. Studio walks from `cwd` (default Vite `config.root`) up to the worktree, so an Nx `apps/...` package is found without moving the lease. `prisma` wins when both ORMs sit in the same package.
 
-## Vitest / Jest adapters
+Shortcuts bind on Vite 8 and vite-plus. Vite 7 and Cedar print the listen panel only. Use `cedarpg status` and `cedarpg studio` for Nx and other non-Vite hosts.
+
+## Nx
+
+Nx `dependsOn` does not forward env from an acquire task into dependents. Vite+ `env: [...]` does. Canonical shape:
+
+1. One `db:ready` (or `createAcquireTask`) that acquires and migrates.
+2. Wrap API, dev, and e2e children with `cedarpg run --mode=dev --force -- <cmd>`.
+
+Pointing Nx `envFile` at `.cedarpg/<mode>.env` after acquire still loses to an ambient `.env` unless you also force or overwrite.
+
+```ts
+import { cedarPgNxTargets, cedarPgRunCommand, relativeEnvFile } from "@cedarjs/pg/nx";
+
+cedarPgNxTargets();
+// { "db:acquire": { command: "cedarpg acquire --mode=dev", cache: false }, ... }
+
+cedarPgRunCommand("dev", "yarn tsx scripts/apiServer/dev.ts");
+// "cedarpg run --mode=dev -- yarn tsx scripts/apiServer/dev.ts"
+
+relativeEnvFile("dev"); // ".cedarpg/dev.env"
+```
+
+```json
+{
+  "targets": {
+    "db:ready": { "command": "tsx tools/db-ready.ts", "cache": false },
+    "dev": {
+      "dependsOn": ["db:ready"],
+      "command": "cedarpg run --mode=dev --force -- yarn tsx scripts/apiServer/dev.ts"
+    },
+    "serve": {
+      "dependsOn": ["db:ready"],
+      "command": "cedarpg run --mode=dev --force -- node dist/server.js"
+    }
+  }
+}
+```
+
+Migrate hook (same compose shape as Jest `createGlobalSetup`):
+
+```ts
+// tools/db-ready.ts
+import { createAcquireTask } from "@cedarjs/pg";
+
+await createAcquireTask({
+  mode: "dev",
+  // Need this when .env already has DATABASE_URL
+  force: true,
+  afterAcquire: async ({ databaseUrl }) => {
+    // prisma migrate deploy, drizzle push, ...
+  },
+})();
+```
+
+If you cannot wrap with `run`, use `loadDevEnv({ overwrite: true })` or `import "@cedarjs/pg/dev-env"`. Absolute path helper: `envFilePath(root, mode)`.
+
+## Vitest and Jest
+
+Stock `@cedarjs/pg/vitest` and `@cedarjs/pg/jest` only acquire and dispose. One shared test DB. They do not migrate, and they do not clone per worker. For migrate-once plus clones, see [TEMPLATE clones](#template-clones).
 
 ```ts
 // vitest.config.ts
@@ -221,171 +185,80 @@ export default defineConfig({
 });
 ```
 
+Vitest runs `globalSetup` in the main process, then workers inherit `process.env`. Add `setupFiles: ["@cedarjs/pg/test-env"]` only if your pool does not inherit env.
+
 ```js
-// jest.config.cjs — standalone apps
+// jest.config.cjs
 module.exports = {
   globalSetup: require.resolve("@cedarjs/pg/jest"),
   globalTeardown: require.resolve("@cedarjs/pg/jest-teardown"),
-  // Jest globalSetup is a separate process — workers load DATABASE_URL from .cedarpg/test.env
+  // Jest globalSetup is a separate process. Workers load DATABASE_URL from .cedarpg/test.env.
   setupFiles: [require.resolve("@cedarjs/pg/test-env")],
 };
 ```
 
-### Framework hosts (CedarJS, custom globalSetup)
+`loadTestEnv` and `loadDevEnv` fill undefined keys by default. Pass `{ overwrite: true }` (or import `@cedarjs/pg/dev-env`) when a local `.env` URL should lose to cedar-pg. That is not the same as `CEDAR_PG_FORCE` or `{ force: true }` (external-URL escape hatch).
 
-If your runner already owns `globalSetup` (e.g. Prisma push/migrate after acquire), **do not** replace it with `@cedarjs/pg/jest`. Compose instead:
+## CedarJS and custom globalSetup
 
-1. In your `globalSetup`: call `acquireIfNeeded` when opted in, then run migrations.
-2. Add `setupFiles: [require.resolve('@cedarjs/pg/test-env')]` so Jest **workers** see `DATABASE_URL`.
-3. In your `globalTeardown`: call `dispose({ mode: 'test', root })`.
+If the runner already owns `globalSetup` (Prisma push or migrate after acquire), do not replace it with `@cedarjs/pg/jest`. Compose:
+
+1. In `globalSetup`, call `acquireIfNeeded` when opted in, then migrate.
+2. Add `setupFiles: [require.resolve("@cedarjs/pg/test-env")]` so Jest workers see `DATABASE_URL`.
+3. In `globalTeardown`, call `dispose({ mode: "test", root })`.
 
 ```ts
-// framework globalSetup (sketch)
 import { acquireIfNeeded } from "@cedarjs/pg";
 
 if (process.env.CEDAR_PG === "1" || process.env.CEDAR_PG === "true") {
   await acquireIfNeeded({
     root: projectRoot, // e.g. getPaths().base
     mode: "test",
-    setEnv: true, // this process (prisma) — workers use @cedarjs/pg/test-env
+    setEnv: true, // this process (prisma). Workers use @cedarjs/pg/test-env.
     url: process.env.TEST_DATABASE_URL,
     force: process.env.CEDAR_PG_FORCE === "1",
-    disabled: false, // framework opt-in; adapters alone use CEDAR_PG=0 opt-out
+    disabled: false, // framework opt-in. Stock adapters use CEDAR_PG=0 opt-out.
   });
 }
-// … prisma db push / migrate …
 ```
 
-```js
-// jest-preset
-setupFiles: [require.resolve("@cedarjs/pg/test-env")],
-```
+## TEMPLATE clones
 
-Use exported `STATE_DIRNAME` (`.cedarpg`) / `loadTestEnv` / `loadDevEnv` /
-`envFilePath(root, mode)` instead of hardcoding the lease dir.
+Migrate stays app-owned via `createGlobalSetup({ migrate })`. The adapter then marks TEMPLATE and clones per worker.
 
-`loadTestEnv` / `loadDevEnv` only fill **undefined** keys by default. Pass
-`{ overwrite: true }` (or import `@cedarjs/pg/dev-env`) when a local `.env`
-`DATABASE_URL` / `TEST_DATABASE_URL` should lose to cedar-pg. That is not the
-same as `CEDAR_PG_FORCE` / acquire `{ force }` (external-URL escape hatch).
+Point `globalSetup` at a local module that calls `createGlobalSetup`. String-resolving the package entry without a migrate hook throws.
 
-## Programmatic API
-
-```ts
-import { acquire, dispose, loadTestEnv, loadDevEnv, envFilePath, STATE_DIRNAME } from "@cedarjs/pg";
-
-const { databaseUrl, adminUrl, databaseName, dispose: drop } = await acquire({ mode: "test" });
-// … tests …
-await drop();
-
-loadDevEnv({ overwrite: true }); // override .env DATABASE_URL from .cedarpg/dev.env
-```
-
-### Host startup (local recovery, CI ephemeral)
-
-cedar-pg **attaches** to the autopg host as soon as TCP accepts on the port from `autopg status --json`. Registration is not liveness: an installed-but-stopped host still reports port 25432, and attaching to it was the `ECONNREFUSED 127.0.0.1:25432` bug.
-
-When nothing is listening, cedar-pg brings **your** autopg host up — `autopg restart` (autopg's start verb), then `autopg install` if the host was never registered — and attaches once TCP accepts. Same singleton, same port, same `~/.autopg/data`, still running after your process exits. If neither verb produces a listener, `acquire` fails with what it tried instead of connecting to a dead port. cedar-pg never runs a second local Postgres.
-
-In CI, cedar-pg starts an **opinionated ephemeral host** automatically when `CI=true` (or when forced). Callers just use `acquire` — no host options bag:
-
-```ts
-import { acquire } from "@cedarjs/pg";
-
-// CI=true → detached postmaster (--ram on Linux /dev/shm); does not rewrite ~/.autopg
-const { databaseUrl } = await acquire({ mode: "test" });
-```
-
-| Signal                      | Effect (attach always wins when something is listening)                       |
-| --------------------------- | ----------------------------------------------------------------------------- |
-| `CEDAR_PG_EPHEMERAL_HOST=1` | Ephemeral: owned postmaster on 55432                                          |
-| `CEDAR_PG_EPHEMERAL_HOST=0` | Never own a postmaster (even when `CI=true`): local autopg host only, or fail |
-| unset + `CI=true`           | Ephemeral                                                                     |
-| unset                       | Local: `autopg restart`, then `autopg install`, then fail                     |
-
-Ephemeral recipe (not configurable via cedar-pg):
-
-- detached `autopg postmaster --port 55432 --socket-dir DIR --data DIR`
-- does **not** run `autopg install` (that rewrites `~/.autopg/admin.json` and conflicts with a local pm2 host)
-- Linux when `/dev/shm` exists → also `--ram` and `DIR=/dev/shm/cedar-pg-<uid>`
-- otherwise → disk `DIR` under the OS temp dir (still owned, no pm2)
-- Ready when TCP accepts on the recipe port (not merely `autopg status` after install)
-- Before cold-start, if the recipe port is **not** live, cedar-pg prunes leftover
-  `/dev/shm/cedar-pg-*`, `pgserve-*`, and `PostgreSQL.*` (OOM-killed runs filling tmpfs).
-  Safe on isolated CI VMs; on shared self-hosted runners another job’s leftovers could match those globs.
-
-If TCP already accepts on the discovered autopg port — or, in ephemeral mode, on the recipe port (55432) — cedar-pg attaches and does not start another. The **CI job owns** ephemeral postmaster lifetime (runner teardown / `/dev/shm`); there is no cedar-pg host dispose API.
-
-Cloud / small VMs often ship `/dev/shm` at ~64MB — too small for `--ram`. Remount before tests if needed (`sudo mount -o remount,size=6G /dev/shm`). See [Troubleshooting](#troubleshooting).
-
-### CI setup (GitHub Actions)
-
-Prefer the composite action (cache + attested binary install, no pm2). Version defaults to this repo’s `scripts/autopg-version`:
-
-```yaml
-- uses: actions/checkout@v6
-# In cedar-pg:
-- uses: ./.github/actions/setup-autopg
-# From another repo (pin to a tag when publishing the action):
-# - uses: cedarjs/cedar-pg/.github/actions/setup-autopg@main
-```
-
-See [`.github/actions/setup-autopg`](.github/actions/setup-autopg/README.md) for inputs (`version`, `cache`, `token`) and outputs.
-
-The action runs `scripts/ci-install-autopg.sh` under the hood. For published-package consumers under `CI=true` without the Action, set `CEDAR_PG_INSTALL_AUTOPG=1` so `postinstall` runs that same script (not upstream `install.sh`) — that flag alone is not enough when the package manager disables lifecycle scripts (`--ignore-scripts`, `YARN_ENABLE_SCRIPTS=false`, etc.). Prefer this Action, or bake the binary into the image.
-
-**Yarn Berry / ignore-scripts consumers** (copy-paste when you cannot use the Action).
-Requires a real `node_modules` tree (`nodeLinker: node-modules` / `pnpm`); default Yarn PnP has no `node_modules/@cedarjs/pg/…` path — resolve via `yarn node` / `require.resolve` instead, or prefer the Action.
-
-```yaml
-- name: Ensure autopg binary
-  run: |
-    set -euo pipefail
-    echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
-    export PATH="${HOME}/.local/bin:${PATH}"
-    bash node_modules/@cedarjs/pg/scripts/ci-install-autopg.sh
-  env:
-    GH_TOKEN: ${{ github.token }}
-```
-
-### Migrate-once + TEMPLATE clones (Jest / Vitest)
-
-Stock `@cedarjs/pg/jest` and `@cedarjs/pg/vitest` only run `acquireIfNeeded` + `dispose` (one shared test DB). They are **not** a full replacement for Redwood-style globalSetup that migrates once and clones per worker. For that, use template mode.
-
-Migrate stays app-owned via `createGlobalSetup({ migrate })`, then the adapter marks TEMPLATE and clones per worker. Point `globalSetup` at a **local** module that calls `createGlobalSetup` — string-resolving the package entry without a migrate hook throws.
-
-**Jest (template mode):**
+### Jest
 
 ```js
 // jest.cedar-global.cjs
 const { createGlobalSetup } = require("@cedarjs/pg/jest/template");
 module.exports = createGlobalSetup({
   migrate: async ({ databaseUrl }) => {
-    // prisma migrate reset / drizzle push / etc.
+    // prisma migrate reset, drizzle push
   },
 });
 
 // jest.config.cjs
-// When .env has a real TEST_DATABASE_URL / DATABASE_URL, set FORCE once here
-// so it inherits into globalSetup + workers (dotenv will not override existing keys).
+// When .env has a real TEST_DATABASE_URL, set FORCE once here so it
+// inherits into globalSetup and workers (dotenv will not override existing keys).
 process.env.CEDAR_PG_FORCE = "1";
 
 module.exports = {
   globalSetup: "<rootDir>/jest.cedar-global.cjs",
   globalTeardown: require.resolve("@cedarjs/pg/jest-teardown"),
   // Prefer setupFilesAfterEnv so you can use beforeAll (Jest globals).
-  // Both setupFiles and setupFilesAfterEnv run once per test file; the module-level
-  // memo only dedupes within that load. Default unique clone names still work if
-  // the module reloads (one clone per file).
   setupFilesAfterEnv: ["<rootDir>/jest.cedar-worker.cjs"],
 };
 
-// jest.cedar-worker.cjs — runs once per test file (beforeAll); memo is per module load
+// jest.cedar-worker.cjs
 const { cloneWorkerDatabase } = require("@cedarjs/pg/jest/template");
 beforeAll(() => cloneWorkerDatabase());
 ```
 
-**Vitest (template mode):**
+`cloneWorkerDatabase` memos on `globalThis`, so Jest `setupFiles` (module reload per file) still shares one clone per worker.
+
+### Vitest
 
 ```ts
 // vitest.cedar-global.ts
@@ -404,12 +277,14 @@ export default defineConfig({
   },
 });
 
-// vitest.cedar-worker.ts — once per worker process (ESM top-level await)
+// vitest.cedar-worker.ts
 import { cloneWorkerDatabase } from "@cedarjs/pg/vitest/template";
 await cloneWorkerDatabase();
 ```
 
-**Programmatic** (core API — no runner adapters):
+### Core API
+
+No runner adapters.
 
 ```ts
 import { acquire, markTemplate, cloneFromTemplate, dispose } from "@cedarjs/pg";
@@ -423,48 +298,128 @@ const worker = await cloneFromTemplate({
   name: "1",
   setEnv: true,
 });
-// … tests …
 await worker.dropClone(); // optional: drop one clone only
-await dispose({ root: acquired.root, mode: "test" }); // role-scoped: TEMPLATE + all clones + role
+await dispose({ root: acquired.root, mode: "test" }); // TEMPLATE + all clones + role
 ```
 
-`acquire` returns `adminUrl` for migrate hooks / privileged DDL; `markTemplate` / `cloneFromTemplate` accept it or rediscover the host when omitted.
-`cloneFromTemplate` uses the admin connection internally (`CREATE DATABASE … TEMPLATE`); test roles stay `LOGIN`-only. `setEnv` defaults to false on `cloneFromTemplate`; `cloneFromTemplateIfNeeded` defaults true (same as `acquireIfNeeded`).
-Worker adapters call `cloneFromTemplateIfNeeded` (shared skip policy via `runIfNeeded`) via `cloneWorkerDatabase`.
-`dispose` is role-scoped suite teardown (not `dropClone`): unsets `IS_TEMPLATE` and drops every database owned by the lease role.
+`acquire` returns `adminUrl` for migrate hooks and privileged DDL. `markTemplate` and `cloneFromTemplate` accept it, or rediscover the host when it is omitted. `cloneFromTemplate` uses the admin connection (`CREATE DATABASE ... TEMPLATE`). Test roles stay `LOGIN`-only.
 
-## Env
+`setEnv` defaults to false on `cloneFromTemplate`. It defaults to true on `cloneFromTemplateIfNeeded` (same as `acquireIfNeeded`). Worker adapters call `cloneFromTemplateIfNeeded` via `cloneWorkerDatabase`.
 
-| Var                            | Meaning                                                                                                        |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| `AUTOPG_BIN`                   | Path to autopg                                                                                                 |
-| `AUTOPG_PG_USER` / `_PASSWORD` | Autopg superuser for admin URL (default `postgres` / `postgres`)                                               |
-| `CEDAR_PG=0`                   | Disable auto-acquire in adapters                                                                               |
-| `TEST_DATABASE_URL`            | Escape hatch: skip acquire for real external DBs (not `cpg_*` / `file:` / `{…}` / `<…>` template placeholders) |
-| `CEDAR_PG_FORCE=1`             | Ignore external-URL escape hatch (adapters + `cedarpg acquire --force` / `run --force`)                        |
-| `CEDAR_PG_EPHEMERAL_HOST`      | `1` owned postmaster; `0` never own one (even in CI); unset + `CI=true` → ephemeral                            |
-| `CEDAR_PG_REGISTRY_DIR`        | Override global lease registry (for `gc`)                                                                      |
-| `CEDAR_PG_SKIP_POSTINSTALL=1`  | Skip autopg install hook                                                                                       |
-| `CEDAR_PG_INSTALL_AUTOPG=1`    | Under `CI=true`, run binary-only `ci-install-autopg.sh` from postinstall                                       |
+`dispose` is role-scoped suite teardown, not `dropClone`. It unsets `IS_TEMPLATE` and drops every database owned by the lease role.
 
-## Beta caveats
+## Host and CI
 
-- Public API may change before a stable `1.0.0` release (current publish is `0.2.0-beta.x` on the `beta` dist-tag).
-- End-to-end Postgres flows assume a working local `autopg` host; unit tests do not start Postgres.
-  CI runs `vp run smoke:pg` for Vitest/Jest adapters against real Postgres
-  (ephemeral cold-start when the runner has no live host; attach-wins otherwise).
-- State lives in product-owned `.cedarpg` (worktree + `~/.cedarpg/registry`), not under autopg's `~/.autopg/` or a generic `.pg`.
-- Role passwords are derived from `roleName` (`cedar-pg\\0` + roleName, scheme v2) so TEMPLATE clones that reuse a role keep working; bump the scheme id to change the derivation.
-- Test TEMPLATE flow: `acquire` → app migrate → `markTemplate` → `cloneFromTemplate` → role-scoped `dispose`. Optional `@cedarjs/pg/jest/template` + `@cedarjs/pg/vitest/template` adapters orchestrate that pipeline via `createGlobalSetup({ migrate })`; migrate stays app-owned.
+`acquire` attaches when TCP accepts on the port from `autopg status --json`. Registration is not liveness. An installed-but-stopped host still reports a port.
+
+When nothing is listening, cedar-pg brings up the registered local host. It runs `autopg restart`, then `autopg install` if the host was never registered. It attaches once TCP accepts. Same port, same `~/.autopg/data`. It does not start a second local Postgres. If neither verb produces a listener, `acquire` fails with what it tried.
+
+Callers use `acquire` (and `adminUrl`). There is no public host-options object. Ephemeral behavior is env-driven.
+
+```ts
+import { acquire } from "@cedarjs/pg";
+
+// CI=true: detached postmaster (--ram on Linux /dev/shm). Does not rewrite ~/.autopg.
+const { databaseUrl } = await acquire({ mode: "test" });
+```
+
+| Signal                      | Effect (attach always wins when something is listening)                       |
+| --------------------------- | ----------------------------------------------------------------------------- |
+| `CEDAR_PG_EPHEMERAL_HOST=1` | Ephemeral owned postmaster on 55432                                           |
+| `CEDAR_PG_EPHEMERAL_HOST=0` | Never own a postmaster (even when `CI=true`). Local autopg host only, or fail |
+| unset and `CI=true`         | Ephemeral                                                                     |
+| unset                       | Local: `autopg restart`, then `autopg install`, then fail                     |
+
+Ephemeral recipe (not configurable via cedar-pg):
+
+- Detached `autopg postmaster --port 55432 --socket-dir DIR --data DIR`
+- Does not run `autopg install` (that rewrites `~/.autopg/admin.json` and conflicts with a local pm2 host)
+- Linux when `/dev/shm` exists: also `--ram` and `DIR=/dev/shm/cedar-pg-<uid>`
+- Otherwise: disk `DIR` under the OS temp dir
+- Ready when TCP accepts on the recipe port
+- Before cold-start, if the recipe port is not live, cedar-pg prunes leftover `/dev/shm/cedar-pg-*`, `pgserve-*`, and `PostgreSQL.*` (OOM-killed runs filling tmpfs). Safe on isolated CI VMs. On shared self-hosted runners another job's leftovers could match those globs.
+
+If TCP already accepts on the discovered autopg port, or in ephemeral mode on 55432, cedar-pg attaches and does not start another. The CI job owns ephemeral postmaster lifetime (runner teardown, `/dev/shm`). There is no cedar-pg host dispose API.
+
+Cloud VMs often ship `/dev/shm` at about 64MB, too small for `--ram`. Remount before tests if needed (`sudo mount -o remount,size=6G /dev/shm`). See [Troubleshooting](#troubleshooting).
+
+### GitHub Actions
+
+Prefer the composite action (cache plus attested binary install, no pm2). Version defaults to this repo's `scripts/autopg-version`. Inputs and outputs: [`.github/actions/setup-autopg`](.github/actions/setup-autopg/README.md).
+
+```yaml
+- uses: actions/checkout@v6
+# In cedar-pg:
+- uses: ./.github/actions/setup-autopg
+# From another repo (pin to a tag when publishing the action):
+# - uses: cedarjs/cedar-pg/.github/actions/setup-autopg@main
+```
+
+The action runs `scripts/ci-install-autopg.sh`. For published-package consumers under `CI=true` without the Action, set `CEDAR_PG_INSTALL_AUTOPG=1` so `postinstall` runs that script (not upstream `install.sh`). That flag is not enough when the package manager disables lifecycle scripts (`--ignore-scripts`, `YARN_ENABLE_SCRIPTS=false`). Prefer the Action, or bake the binary into the image.
+
+Yarn Berry or ignore-scripts, when you cannot use the Action. Requires a real `node_modules` tree (`nodeLinker: node-modules` or pnpm). Default Yarn PnP has no `node_modules/@cedarjs/pg/...` path. Resolve via `yarn node` or `require.resolve`, or prefer the Action.
+
+```yaml
+- name: Ensure autopg binary
+  run: |
+    set -euo pipefail
+    echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+    export PATH="${HOME}/.local/bin:${PATH}"
+    bash node_modules/@cedarjs/pg/scripts/ci-install-autopg.sh
+  env:
+    GH_TOKEN: ${{ github.token }}
+```
+
+## Environment variables
+
+| Var                                    | Meaning                                                                                                                                                                                              |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AUTOPG_BIN`                           | Path to the autopg binary                                                                                                                                                                            |
+| `AUTOPG_PG_USER`, `AUTOPG_PG_PASSWORD` | Autopg superuser for admin URL (default user `postgres`, password `postgres`)                                                                                                                        |
+| `CEDAR_PG=0`                           | Disable auto-acquire in adapters                                                                                                                                                                     |
+| `TEST_DATABASE_URL`                    | Default escape hatch for `acquireIfNeeded`. Skip acquire for a real external DB (not `cpg_*`, `file:`, or `{...}` or `<...>` placeholders). Callers may pass `url` (`DATABASE_URL` is common in dev) |
+| `CEDAR_PG_FORCE=1`                     | Ignore the external-URL escape hatch (adapters, `cedarpg acquire --force`, `cedarpg run --force`)                                                                                                    |
+| `CEDAR_PG_EPHEMERAL_HOST`              | `1` owned postmaster. `0` never own one (even in CI). Unset and `CI=true` means ephemeral                                                                                                            |
+| `CEDAR_PG_REGISTRY_DIR`                | Override the global lease registry (for `gc`)                                                                                                                                                        |
+| `CEDAR_PG_SKIP_POSTINSTALL=1`          | Skip the autopg install hook                                                                                                                                                                         |
+| `CEDAR_PG_INSTALL_AUTOPG=1`            | Under `CI=true`, run binary-only `ci-install-autopg.sh` from postinstall                                                                                                                             |
+
+`force`, `overwrite`, and `run` are different knobs. Do not collapse them.
+
+## Programmatic API
+
+```ts
+import { acquire, loadDevEnv } from "@cedarjs/pg";
+
+const { databaseUrl, adminUrl, databaseName, dispose } = await acquire({ mode: "test" });
+await dispose();
+
+loadDevEnv({ overwrite: true }); // override .env DATABASE_URL from .cedarpg/dev.env
+```
+
+Unit tests in this repo do not start Postgres. CI runs `vp run smoke:pg` for Vitest and Jest adapters against real Postgres (ephemeral cold-start when the runner has no live host; attach wins otherwise).
+
+## Develop this package
+
+Vite+, Node `>=24` (`.node-version`), `pnpm@11`. Contributor rules: [AGENTS.md](AGENTS.md). User-visible API changes: [CHANGELOG.md](CHANGELOG.md).
+
+```bash
+vp install
+vp check
+vp test
+vp pack            # dist/ (dts + esm + cjs)
+vp run smoke       # pack, then tarball install, then resolve exports
+vp run smoke:pg    # pack, then Vitest and Jest adapters against real ephemeral Postgres
+```
 
 ## Troubleshooting
 
-| Symptom                                                                                 | Fix                                                                                                                                                                                                                                                                                                                                          |
-| --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ECONNREFUSED 127.0.0.1:25432` on `cedarpg acquire`                                     | autopg is registered but not listening. cedar-pg no longer treats registration as live: it runs `autopg restart` (then `install`) and attaches once TCP accepts. `restart` exiting 0 is not proof — when pm2 is missing it still prints “respawned daemon”. If both verbs fail, install pm2 / fix the supervisor (`pm2 logs autopg-server`). |
-| `database already exists: …_c_<workerId>` in Jest                                       | Use current `@cedarjs/pg` (unique default clone names). Prefer `setupFilesAfterEnv` + `beforeAll` (Jest globals). Both hooks run per test file — memo is per module load, not process-wide. Avoid bare `JEST_WORKER_ID` as an explicit `name`.                                                                                               |
-| Acquire skipped; tests hit shared / stale Postgres                                      | Real `.env` `TEST_DATABASE_URL` / `DATABASE_URL` trips the escape hatch. Set `CEDAR_PG_FORCE=1` once in `jest.config.js`, or `force: true` / `cedarpg run --force`.                                                                                                                                                                          |
-| `Disk quota exceeded` / `No space left on device` / Postgres `53100` on ephemeral start | Enlarge `/dev/shm` (`sudo mount -o remount,size=6G /dev/shm`). On **isolated** runners only: `rm -rf /dev/shm/cedar-pg-* /dev/shm/pgserve-* /dev/shm/PostgreSQL.*`. Cold-start also prunes these when the recipe port is dead.                                                                                                               |
-| `autopg: command not found` in CI with Yarn `YARN_ENABLE_SCRIPTS=false`                 | `CEDAR_PG_INSTALL_AUTOPG=1` is not enough when lifecycle scripts are off. With `nodeLinker: node-modules`, run `bash node_modules/@cedarjs/pg/scripts/ci-install-autopg.sh` and put `~/.local/bin` on `PATH` (or use `setup-autopg`). PnP: resolve the script path via Yarn, or prefer the Action.                                           |
-| Nx child still uses `.env` `DATABASE_URL`                                               | `dependsOn` does not forward acquire env. Wrap with `cedarpg run --mode=dev --force -- <cmd>`, or `loadDevEnv({ overwrite: true })`.                                                                                                                                                                                                         |
-| Role/DB errors under parallel Nx targets                                                | Do not run concurrent `acquire` / `run` on the same worktree. One `db:ready`, then `run` wrappers.                                                                                                                                                                                                                                           |
+| Symptom                                                                                 | Fix                                                                                                                                                                                                                                                                                                |
+| --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ECONNREFUSED 127.0.0.1:25432` on `cedarpg acquire`                                     | autopg is registered but not listening. cedar-pg runs `autopg restart` (then `install`) and attaches once TCP accepts. `restart` exiting 0 is not proof. When pm2 is missing it still prints "respawned daemon". If both verbs fail, install pm2 or fix the supervisor (`pm2 logs autopg-server`). |
+| `database already exists: ..._c_<workerId>` in Jest                                     | Use current `@cedarjs/pg` (`cloneWorkerDatabase` memos on `globalThis`). Prefer `setupFilesAfterEnv` + `beforeAll`. Avoid passing bare `JEST_WORKER_ID` as an explicit `name`.                                                                                                                     |
+| Acquire skipped. Tests hit shared or stale Postgres                                     | A real `.env` `TEST_DATABASE_URL` (or a `url` the caller passed) trips the escape hatch. Set `CEDAR_PG_FORCE=1` once in `jest.config.js`, or `force: true`, or `cedarpg run --force`.                                                                                                              |
+| `Disk quota exceeded` / `No space left on device` / Postgres `53100` on ephemeral start | Enlarge `/dev/shm` (`sudo mount -o remount,size=6G /dev/shm`). On isolated runners only: `rm -rf /dev/shm/cedar-pg-* /dev/shm/pgserve-* /dev/shm/PostgreSQL.*`. Cold-start also prunes these when the recipe port is dead.                                                                         |
+| `autopg: command not found` in CI with Yarn `YARN_ENABLE_SCRIPTS=false`                 | `CEDAR_PG_INSTALL_AUTOPG=1` is not enough when lifecycle scripts are off. With `nodeLinker: node-modules`, run `bash node_modules/@cedarjs/pg/scripts/ci-install-autopg.sh` and put `~/.local/bin` on `PATH` (or use `setup-autopg`). PnP: resolve the script path via Yarn, or prefer the Action. |
+| Nx child still uses `.env` `DATABASE_URL`                                               | `dependsOn` does not forward acquire env. Wrap with `cedarpg run --mode=dev --force -- <cmd>`, or `loadDevEnv({ overwrite: true })`.                                                                                                                                                               |
+| Role or DB errors under parallel Nx targets                                             | Do not run concurrent `acquire` or `run` on the same worktree. One `db:ready`, then `run` wrappers.                                                                                                                                                                                                |
