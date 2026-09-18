@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import pg from "pg";
 import { PASSWORD_SALT_PREFIX } from "../core/constants.ts";
@@ -11,6 +11,21 @@ export type AutopgDiscovery = {
   adminUrl: string;
   bin: string;
 };
+
+/** Registered host paths from `autopg status --json` (or autopg defaults). */
+export type AutopgRegistration = AutopgDiscovery & {
+  dataDir: string;
+  socketDir: string;
+};
+
+export function defaultAutopgDataDir(): string {
+  return join(homedir(), ".autopg", "data");
+}
+
+export function defaultAutopgSocketDir(env: NodeJS.ProcessEnv = process.env): string {
+  const xdg = env.XDG_RUNTIME_DIR?.trim();
+  return xdg ? join(xdg, "pgserve") : join(tmpdir(), "pgserve");
+}
 
 export const INSTALL_HINT =
   "autopg is required. Install with:\n" +
@@ -48,17 +63,26 @@ export function requireAutopgBin(): string {
   return bin;
 }
 
+function optionalNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
 /**
- * Parse `autopg status --json` → the **registered** port. Throws only when the
- * output is not autopg status JSON.
+ * Parse `autopg status --json` → the **registered** port (and data/socket dirs
+ * when present). Throws only when the output is not autopg status JSON.
  *
  * Registration is not liveness: autopg reports a port for a stopped host too,
  * and its `status` string is supervisor-specific (pm2 `online`, systemd-user /
- * launchd differ). Liveness is a TCP accept on the port, proven by the caller —
- * `acquire` does that before it connects.
+ * launchd differ). `runtime.live` is also not the attach gate — a bare
+ * postmaster can be query-ready while status stays `stopped` / `pid: null`.
+ * Liveness is a TCP accept on the port, proven by the caller (`acquire`).
  */
-export function parseHostStatus(json: string): { port: number } {
-  let parsed: { port?: unknown };
+export function parseHostStatus(json: string): {
+  port: number;
+  dataDir?: string;
+  socketDir?: string;
+} {
+  let parsed: { port?: unknown; dataDir?: unknown; socketDir?: unknown };
   try {
     parsed = JSON.parse(json) as typeof parsed;
   } catch {
@@ -67,7 +91,13 @@ export function parseHostStatus(json: string): { port: number } {
   if (typeof parsed.port !== "number") {
     throw new Error(`autopg status --json missing numeric port.\n${INSTALL_HINT}`);
   }
-  return { port: parsed.port };
+  const dataDir = optionalNonEmptyString(parsed.dataDir);
+  const socketDir = optionalNonEmptyString(parsed.socketDir);
+  return {
+    port: parsed.port,
+    ...(dataDir ? { dataDir } : {}),
+    ...(socketDir ? { socketDir } : {}),
+  };
 }
 
 /**
@@ -88,15 +118,9 @@ export function adminUrlFor(port: number, env: NodeJS.ProcessEnv = process.env):
   return `postgresql://${user}:${password}@127.0.0.1:${port}/postgres`;
 }
 
-/**
- * Discover the registered autopg host (port + admin URL) via `autopg status --json`.
- * Throws when autopg cannot be queried; does **not** prove a listener — probe TCP
- * (or use `acquire`, which does) before connecting.
- */
-export function discoverHost(bin = requireAutopgBin()): AutopgDiscovery {
-  let status: string;
+function readStatusJson(bin: string): string {
   try {
-    status = execFileSync(bin, ["status", "--json"], {
+    return execFileSync(bin, ["status", "--json"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -104,8 +128,32 @@ export function discoverHost(bin = requireAutopgBin()): AutopgDiscovery {
     const detail = err instanceof Error ? err.message : String(err);
     throw new Error(`Failed to query autopg status.\n${detail}\n${INSTALL_HINT}`);
   }
-  const { port } = parseHostStatus(status);
-  return { port, adminUrl: adminUrlFor(port), bin };
+}
+
+/**
+ * Discover the registered autopg host (port, data dir, socket dir) via
+ * `autopg status --json`. Throws when autopg cannot be queried; does **not**
+ * prove a listener — probe TCP (or use `acquire`, which does) before connecting.
+ */
+export function discoverRegistration(bin = requireAutopgBin()): AutopgRegistration {
+  const parsed = parseHostStatus(readStatusJson(bin));
+  return {
+    port: parsed.port,
+    adminUrl: adminUrlFor(parsed.port),
+    bin,
+    dataDir: parsed.dataDir ?? defaultAutopgDataDir(),
+    socketDir: parsed.socketDir ?? defaultAutopgSocketDir(),
+  };
+}
+
+/**
+ * Discover the registered autopg host (port + admin URL) via `autopg status --json`.
+ * Throws when autopg cannot be queried; does **not** prove a listener — probe TCP
+ * (or use `acquire`, which does) before connecting.
+ */
+export function discoverHost(bin = requireAutopgBin()): AutopgDiscovery {
+  const { port, adminUrl, bin: resolved } = discoverRegistration(bin);
+  return { port, adminUrl, bin: resolved };
 }
 
 function quoteIdent(name: string): string {

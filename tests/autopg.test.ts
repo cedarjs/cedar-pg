@@ -1,7 +1,11 @@
 import { expect, test } from "vite-plus/test";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   adminUrlFor,
   buildDatabaseUrl,
+  defaultAutopgDataDir,
+  defaultAutopgSocketDir,
   parseHostStatus,
   rolePasswordFor,
   ROLE_PASSWORD_SCHEME,
@@ -16,20 +20,36 @@ test("parseHostStatus requires numeric port", () => {
 test("parseHostStatus reports the registered port without judging liveness", () => {
   // Real `autopg status --json` for an installed-but-stopped pm2 host: the port
   // is registration, not a listener. TCP is the only liveness gate (host.ts).
+  // Bare postmaster: status=stopped / pid=null while runtime.live=true — still
+  // not an attach/reinstall signal.
   const stopped = `{
     "installed": true,
     "name": "autopg-server",
     "status": "stopped",
     "pid": null,
     "port": 25432,
-    "runtime": null,
+    "dataDir": "/home/user/.autopg/data",
+    "socketDir": "/run/user/1000/pgserve",
+    "runtime": { "live": true, "port": 25432, "pid": 1686040 },
     "supervisor": "pm2"
   }`;
-  expect(parseHostStatus(stopped)).toEqual({ port: 25432 });
+  expect(parseHostStatus(stopped)).toEqual({
+    port: 25432,
+    dataDir: "/home/user/.autopg/data",
+    socketDir: "/run/user/1000/pgserve",
+  });
   // Supervisor-specific status strings (systemd-user / launchd tiers) never
   // hide the port from attach.
   expect(parseHostStatus('{"port":55432,"status":"running"}')).toEqual({ port: 55432 });
   expect(parseHostStatus('{"port":5432,"running":false}')).toEqual({ port: 5432 });
+});
+
+test("defaultAutopg paths follow ~/.autopg/data and XDG_RUNTIME_DIR/pgserve", () => {
+  expect(defaultAutopgDataDir()).toBe(join(homedir(), ".autopg", "data"));
+  expect(defaultAutopgSocketDir({ XDG_RUNTIME_DIR: "/run/user/1000" })).toBe(
+    "/run/user/1000/pgserve",
+  );
+  expect(defaultAutopgSocketDir({})).toBe(join(tmpdir(), "pgserve"));
 });
 
 test("adminUrlFor uses autopg default credentials and AUTOPG_PG_* overrides", () => {
