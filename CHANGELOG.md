@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.2.0-beta.1
+
+Revive a registered autopg host without pm2.
+
 ### Fixed
 
 - Local acquire on a registered host no longer requires pm2. After `autopg restart` (including exit 0 “respawned daemon” with no listener), cedar-pg revives the **same** port / `~/.autopg/data` with detached `autopg postmaster` instead of `autopg install`. `status=stopped` + `runtime.live=true` is still not a reinstall signal — TCP accept is the attach gate. Fail-closed errors list what was tried; they do not ask you to install pm2.
