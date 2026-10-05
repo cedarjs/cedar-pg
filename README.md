@@ -45,6 +45,12 @@ vp pack
 # or install the tarball vp pack writes (name includes the version in package.json)
 ```
 
+Every push to `main` and every PR also builds a preview on [pkg.pr.new](https://pkg.pr.new) (not the npm registry):
+
+```bash
+pnpm add -D https://pkg.pr.new/@cedarjs/pg@<commit-sha-or-pr-number>
+```
+
 ## Acquire a database
 
 `dev` databases persist across restarts. `test` databases drop on `dispose`.
