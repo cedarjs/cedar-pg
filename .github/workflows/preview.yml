@@ -1,0 +1,24 @@
+name: Preview
+
+# Per-commit preview builds via pkg.pr.new (not the npm registry, no 2FA).
+# Requires the pkg.pr.new GitHub App on this repo: https://github.com/apps/pkg-pr-new
+# Install: npm i https://pkg.pr.new/@cedarjs/pg@<sha>   (or @<pr-number>)
+# Real releases still go through publish.yml (staged + 2FA approve).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: .node-version
+          cache: true
+
+      - run: vp pack
+      - run: npx pkg-pr-new publish --pnpm
