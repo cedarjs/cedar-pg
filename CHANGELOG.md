@@ -5,6 +5,8 @@
 ### Fixed
 
 - Local acquire on a registered host no longer requires pm2. After `autopg restart` (including exit 0 “respawned daemon” with no listener), cedar-pg revives the **same** port / `~/.autopg/data` with detached `autopg postmaster` instead of `autopg install`. `status=stopped` + `runtime.live=true` is still not a reinstall signal — TCP accept is the attach gate. Fail-closed errors list what was tried; they do not ask you to install pm2.
+- Registered revive waits for a live `postmaster.pid` owner of the data dir (pm2 still recovering, or a concurrent acquire that won the lock) instead of failing or racing it. It also skips the revive when `autopg status --json` reports no `dataDir`, rather than guessing autopg's paths, and leaves out `--socket-dir` when none is reported. The revived postmaster appends its output to `cedarpg-postmaster.log` in autopg's `logsDir`.
+- `parseHostStatus` also returns `dataDir` / `socketDir` / `logsDir` when autopg reports them (additive).
 
 ## 0.2.0-beta.0
 

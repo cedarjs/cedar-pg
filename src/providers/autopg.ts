@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import pg from "pg";
 import { PASSWORD_SALT_PREFIX } from "../core/constants.ts";
@@ -12,20 +12,18 @@ export type AutopgDiscovery = {
   bin: string;
 };
 
-/** Registered host paths from `autopg status --json` (or autopg defaults). */
-export type AutopgRegistration = AutopgDiscovery & {
-  dataDir: string;
-  socketDir: string;
+/**
+ * Registered host from `autopg status --json`: attach target plus the paths a
+ * revive needs. Paths are only what autopg reports — never guessed, because
+ * autopg's own defaults depend on env (`AUTOPG_CONFIG_DIR`, `XDG_RUNTIME_DIR`).
+ */
+export type AutopgRegistration = HostStatusPaths & { host: AutopgDiscovery };
+
+type HostStatusPaths = {
+  dataDir?: string;
+  socketDir?: string;
+  logsDir?: string;
 };
-
-export function defaultAutopgDataDir(): string {
-  return join(homedir(), ".autopg", "data");
-}
-
-export function defaultAutopgSocketDir(env: NodeJS.ProcessEnv = process.env): string {
-  const xdg = env.XDG_RUNTIME_DIR?.trim();
-  return xdg ? join(xdg, "pgserve") : join(tmpdir(), "pgserve");
-}
 
 export const INSTALL_HINT =
   "autopg is required. Install with:\n" +
@@ -68,8 +66,8 @@ function optionalNonEmptyString(value: unknown): string | undefined {
 }
 
 /**
- * Parse `autopg status --json` → the **registered** port (and data/socket dirs
- * when present). Throws only when the output is not autopg status JSON.
+ * Parse `autopg status --json` → the **registered** port (and data/socket/logs
+ * dirs when present). Throws only when the output is not autopg status JSON.
  *
  * Registration is not liveness: autopg reports a port for a stopped host too,
  * and its `status` string is supervisor-specific (pm2 `online`, systemd-user /
@@ -77,12 +75,8 @@ function optionalNonEmptyString(value: unknown): string | undefined {
  * postmaster can be query-ready while status stays `stopped` / `pid: null`.
  * Liveness is a TCP accept on the port, proven by the caller (`acquire`).
  */
-export function parseHostStatus(json: string): {
-  port: number;
-  dataDir?: string;
-  socketDir?: string;
-} {
-  let parsed: { port?: unknown; dataDir?: unknown; socketDir?: unknown };
+export function parseHostStatus(json: string): HostStatusPaths & { port: number } {
+  let parsed: { port?: unknown } & { [K in keyof HostStatusPaths]?: unknown };
   try {
     parsed = JSON.parse(json) as typeof parsed;
   } catch {
@@ -91,13 +85,12 @@ export function parseHostStatus(json: string): {
   if (typeof parsed.port !== "number") {
     throw new Error(`autopg status --json missing numeric port.\n${INSTALL_HINT}`);
   }
-  const dataDir = optionalNonEmptyString(parsed.dataDir);
-  const socketDir = optionalNonEmptyString(parsed.socketDir);
-  return {
-    port: parsed.port,
-    ...(dataDir ? { dataDir } : {}),
-    ...(socketDir ? { socketDir } : {}),
-  };
+  const result: HostStatusPaths & { port: number } = { port: parsed.port };
+  for (const key of ["dataDir", "socketDir", "logsDir"] as const) {
+    const value = optionalNonEmptyString(parsed[key]);
+    if (value) result[key] = value;
+  }
+  return result;
 }
 
 /**
@@ -131,19 +124,13 @@ function readStatusJson(bin: string): string {
 }
 
 /**
- * Discover the registered autopg host (port, data dir, socket dir) via
- * `autopg status --json`. Throws when autopg cannot be queried; does **not**
- * prove a listener — probe TCP (or use `acquire`, which does) before connecting.
+ * Discover the registered autopg host (attach target + reported data/socket/logs
+ * dirs) via `autopg status --json`. Throws when autopg cannot be queried; does
+ * **not** prove a listener — probe TCP (or use `acquire`, which does) before connecting.
  */
 export function discoverRegistration(bin = requireAutopgBin()): AutopgRegistration {
-  const parsed = parseHostStatus(readStatusJson(bin));
-  return {
-    port: parsed.port,
-    adminUrl: adminUrlFor(parsed.port),
-    bin,
-    dataDir: parsed.dataDir ?? defaultAutopgDataDir(),
-    socketDir: parsed.socketDir ?? defaultAutopgSocketDir(),
-  };
+  const { port, ...paths } = parseHostStatus(readStatusJson(bin));
+  return { host: { port, adminUrl: adminUrlFor(port), bin }, ...paths };
 }
 
 /**
@@ -152,8 +139,7 @@ export function discoverRegistration(bin = requireAutopgBin()): AutopgRegistrati
  * (or use `acquire`, which does) before connecting.
  */
 export function discoverHost(bin = requireAutopgBin()): AutopgDiscovery {
-  const { port, adminUrl, bin: resolved } = discoverRegistration(bin);
-  return { port, adminUrl, bin: resolved };
+  return discoverRegistration(bin).host;
 }
 
 function quoteIdent(name: string): string {
@@ -164,12 +150,55 @@ function quoteLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+/** Grace for a postmaster that accepts TCP but still answers 57P03 (startup / recovery). */
+const ADMIN_CONNECT_READY_MS = 30_000;
+const ADMIN_CONNECT_POLL_MS = 200;
+
+export type ConnectRetryOptions = {
+  readyMs?: number;
+  pollMs?: number;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+};
+
+/**
+ * Retry `connect` while Postgres answers `57P03` (cannot_connect_now: "the
+ * database system is starting up" / in recovery). TCP accept — the host
+ * liveness gate — comes before query-ready, so a freshly revived or crash-
+ * recovering postmaster needs this. Any other error is thrown immediately.
+ */
+export async function connectWhileStartingUp<T>(
+  connect: () => Promise<T>,
+  opts: ConnectRetryOptions = {},
+): Promise<T> {
+  const now = opts.now ?? Date.now;
+  const pause = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const deadline = now() + (opts.readyMs ?? ADMIN_CONNECT_READY_MS);
+  for (;;) {
+    try {
+      return await connect();
+    } catch (err) {
+      if ((err as { code?: unknown }).code !== "57P03" || now() >= deadline) throw err;
+    }
+    await pause(opts.pollMs ?? ADMIN_CONNECT_POLL_MS);
+  }
+}
+
 async function withAdminClient<T>(
   adminUrl: string,
   fn: (client: pg.Client) => Promise<T>,
 ): Promise<T> {
-  const client = new pg.Client({ connectionString: adminUrl });
-  await client.connect();
+  // A pg.Client cannot reconnect after a failed connect — new client per attempt.
+  const client = await connectWhileStartingUp(async () => {
+    const attempt = new pg.Client({ connectionString: adminUrl });
+    try {
+      await attempt.connect();
+      return attempt;
+    } catch (err) {
+      await attempt.end().catch(() => {});
+      throw err;
+    }
+  });
   try {
     return await fn(client);
   } finally {

@@ -1,5 +1,14 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, rmSync, statfsSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statfsSync,
+} from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -260,30 +269,58 @@ async function attachLiveHost(bin: string, readyMs = 0): Promise<AutopgDiscovery
   return (await waitForListener({ port: discovered.port, readyMs })) ? discovered : null;
 }
 
-function registeredPostmasterArgs(reg: AutopgRegistration): string[] {
-  return [
-    "postmaster",
-    "--port",
-    String(reg.port),
-    "--data",
-    reg.dataDir,
-    "--socket-dir",
-    reg.socketDir,
-  ];
+/** Appended by the revived registered postmaster (next to autopg's own pm2 logs). */
+const REVIVED_POSTMASTER_LOG = "cedarpg-postmaster.log";
+
+function errorDetail(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Live PID from `<dataDir>/postmaster.pid`, else `null`. Postgres writes it before
+ * binding, so a live owner means another postmaster (pm2 still recovering, or a
+ * concurrent acquire) already holds the data dir — wait for it, never compete.
+ */
+function liveDataDirOwner(dataDir: string): number | null {
+  let pid: number;
+  try {
+    pid = Number.parseInt(readFileSync(join(dataDir, "postmaster.pid"), "utf8"), 10);
+  } catch {
+    return null;
+  }
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  try {
+    process.kill(pid, 0);
+    return pid;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM" ? pid : null;
+  }
 }
 
 /**
  * Detached `autopg postmaster`. Success: child is unref'd (survives this process).
  * Failure: child is killed, throws a one-line detail (caller wraps / aggregates).
+ * `logFile` (appended) keeps output from a postmaster nothing else supervises;
+ * otherwise stdio is fully ignored (caller exit must not close pipes under it).
  */
 async function spawnDetachedPostmaster(opts: {
   bin: string;
   args: string[];
   port: number;
-  readyMs?: number;
+  readyMs: number;
+  logFile?: string;
 }): Promise<void> {
-  const readyMs = opts.readyMs ?? HOST_READY_MS;
-  const child = spawn(opts.bin, opts.args, { detached: true, stdio: "ignore" });
+  const { readyMs } = opts;
+  const logFd = opts.logFile ? openSync(opts.logFile, "a") : null;
+  let child: ChildProcess;
+  try {
+    child = spawn(opts.bin, opts.args, {
+      detached: true,
+      stdio: logFd == null ? "ignore" : ["ignore", logFd, logFd],
+    });
+  } finally {
+    if (logFd != null) closeSync(logFd);
+  }
   let died: Error | null = null;
   child.on("error", (err) => {
     died = new Error(`Failed to spawn autopg postmaster.\n${err.message}`);
@@ -312,14 +349,64 @@ async function spawnDetachedPostmaster(opts: {
 }
 
 /**
+ * Detached `autopg postmaster` on the registered port / data dir (socket dir when
+ * autopg reports one; otherwise the postmaster resolves autopg's own default).
+ * Returns failure detail, or `null` once TCP accepts.
+ *
+ * No reported `dataDir` → not attempted: a postmaster without `--data` is not
+ * persistent, and guessing autopg's path is how a second Postgres happens.
+ */
+async function reviveRegisteredPostmaster(
+  bin: string,
+  reg: AutopgRegistration,
+): Promise<string | null> {
+  const { dataDir, socketDir, logsDir } = reg;
+  const { port } = reg.host;
+  if (!dataDir) return "autopg postmaster: not attempted (autopg status --json reports no dataDir)";
+
+  const args = [
+    "postmaster",
+    "--port",
+    String(port),
+    "--data",
+    dataDir,
+    ...(socketDir ? ["--socket-dir", socketDir] : []),
+  ];
+  const label = `autopg ${args.join(" ")}`;
+
+  if (liveDataDirOwner(dataDir) == null) {
+    try {
+      mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+      if (logsDir) mkdirSync(logsDir, { recursive: true });
+      await spawnDetachedPostmaster({
+        bin,
+        args,
+        port,
+        readyMs: HOST_READY_MS,
+        ...(logsDir ? { logFile: join(logsDir, REVIVED_POSTMASTER_LOG) } : {}),
+      });
+      return null;
+    } catch (err) {
+      // Lost the data-dir lock to a concurrent start → wait for the winner below.
+      if (liveDataDirOwner(dataDir) == null) return `${label}: ${errorDetail(err)}`;
+    }
+  }
+
+  if (await waitForListener({ port, readyMs: HOST_READY_MS })) return null;
+  return (
+    `${label}: postmaster pid ${liveDataDirOwner(dataDir) ?? "?"} owns ${dataDir} ` +
+    `but did not accept 127.0.0.1:${port} within ${HOST_READY_MS}ms`
+  );
+}
+
+/**
  * Revive the user's registered autopg host — same port, same `~/.autopg/data`,
  * still running after this process exits. Never a second local Postgres.
  *
  * `restart` exit 0 is not a listener: pm2-less hosts print "respawned daemon"
- * and return 0. If still dark, spawn detached `autopg postmaster` on the
- * registered port/data/socket (binary supervisor). Do not `install` on an
- * already-registered host (wants pm2, can rewrite `admin.json`). `install` is
- * only for a never-registered machine.
+ * and return 0. If still dark, {@link reviveRegisteredPostmaster} on the
+ * registered port/data. Do not `install` on an already-registered host (wants
+ * pm2, can rewrite `admin.json`). `install` is only for a never-registered machine.
  */
 async function startLocalHost(
   bin: string,
@@ -331,7 +418,8 @@ async function startLocalHost(
   if (restart.failure) {
     failures.push(`autopg restart: ${restart.failure}`);
   } else {
-    // pm2-less restart prints "respawned daemon" and exits 0 with no listener.
+    // pm2-less restart prints "respawned daemon" and exits 0 with no listener
+    // (autopg v3 `restartLocally`; wording pinned by scripts/autopg-version).
     // Don't burn the pm2 grace period; fall through to registered postmaster.
     const readyMs = /respawned daemon/i.test(restart.output) ? 0 : LOCAL_RESTART_READY_MS;
     const attached = await attachLiveHost(bin, readyMs);
@@ -344,27 +432,9 @@ async function startLocalHost(
   }
 
   if (registered) {
-    mkdirSync(registered.dataDir, { recursive: true });
-    const argv = registeredPostmasterArgs(registered);
-    const label = `autopg ${argv.join(" ")}`;
-    try {
-      await spawnDetachedPostmaster({
-        bin,
-        args: argv,
-        port: registered.port,
-        readyMs: HOST_READY_MS,
-      });
-      return {
-        port: registered.port,
-        adminUrl: registered.adminUrl,
-        bin: registered.bin,
-      };
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      failures.push(`${label}: ${detail}`);
-      const attached = await attachLiveHost(bin, 0);
-      if (attached) return attached;
-    }
+    const failure = await reviveRegisteredPostmaster(bin, registered);
+    if (!failure) return registered.host;
+    failures.push(failure);
   } else {
     const install = runAutopg(bin, ["install"]);
     if (install.failure) {
@@ -378,7 +448,7 @@ async function startLocalHost(
 
   const where =
     registered != null
-      ? `autopg host is registered on 127.0.0.1:${registered.port} but nothing is listening.\n`
+      ? `autopg host is registered on 127.0.0.1:${registered.host.port} but nothing is listening.\n`
       : "";
   throw new Error(formatHostStartError(`${where}${failures.join("\n")}`));
 }
@@ -419,8 +489,7 @@ async function startEphemeralHost(bin: string): Promise<AutopgDiscovery> {
       readyMs: HOST_READY_MS,
     });
   } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    throw new Error(formatHostStartError(detail, useRamShm));
+    throw new Error(formatHostStartError(errorDetail(err), useRamShm));
   }
 
   return discoveryFromRecipe(bin, recipe);
@@ -437,8 +506,8 @@ export async function ensureHostRunning(bin = requireAutopgBin()): Promise<Autop
   } catch {
     // no registration — local recovery may `install`
   }
-  if (registered && (await waitForListener({ port: registered.port }))) {
-    return { port: registered.port, adminUrl: registered.adminUrl, bin: registered.bin };
+  if (registered && (await waitForListener({ port: registered.host.port }))) {
+    return registered.host;
   }
 
   return resolveHostStartPolicy() === "ephemeral"

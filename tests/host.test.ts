@@ -185,17 +185,29 @@ test("pruneStaleEphemeralDataDirs removes cedar-pg / pgserve / PostgreSQL leftov
  *
  * Start verbs are configurable: pm2-less `restart` may no-op (exit 0) or fail;
  * registered revive uses `postmaster` on the status JSON data/socket dirs.
+ * `postmaster: "lose"` models a concurrent start winning the data-dir lock: a
+ * background listener owns `<dataDir>/postmaster.pid` and ours exits 1.
  */
 function writeFakeAutopg(opts: {
   port: number;
   restart?: "fail" | "noop";
-  postmaster?: "fail" | "listen";
-}): { bin: string; log: string; dir: string; dataDir: string; socketDir: string; pidFile: string } {
+  postmaster?: "fail" | "listen" | "lose";
+  report?: { dataDir?: boolean; socketDir?: boolean };
+}): {
+  bin: string;
+  log: string;
+  dir: string;
+  dataDir: string;
+  socketDir: string;
+  logsDir: string;
+  pidFile: string;
+} {
   const dir = mkdtempSync(join(tmpdir(), "cedar-fake-autopg-"));
   const log = join(dir, "calls.log");
   const bin = join(dir, "autopg");
   const dataDir = join(dir, "data");
   const socketDir = join(dir, "sock");
+  const logsDir = join(dir, "logs");
   const pidFile = join(dir, "postmaster.pid");
   mkdirSync(dataDir);
   mkdirSync(socketDir);
@@ -206,8 +218,9 @@ function writeFakeAutopg(opts: {
     status: "stopped",
     pid: null,
     port: opts.port,
-    dataDir,
-    socketDir,
+    dataDir: opts.report?.dataDir === false ? null : dataDir,
+    ...(opts.report?.socketDir === false ? {} : { socketDir }),
+    logsDir,
     supervisor: "pm2",
     runtime: { live: true, port: opts.port, pid: null },
   });
@@ -219,6 +232,20 @@ function writeFakeAutopg(opts: {
     `server.listen(${opts.port}, "127.0.0.1", () => {`,
     `  writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));`,
     `});`,
+  ].join("");
+
+  // Winner of a concurrent start, in its own process group (like a real
+  // postmaster): owns the data dir now, listens shortly after.
+  const winnerJs = [
+    `const { createServer } = require("node:net");`,
+    `setTimeout(() => createServer().listen(${opts.port}, "127.0.0.1"), 300);`,
+  ].join("");
+  const spawnWinnerJs = [
+    `const { spawn } = require("node:child_process");`,
+    `const { writeFileSync } = require("node:fs");`,
+    `const w = spawn(process.execPath, ["-e", ${JSON.stringify(winnerJs)}], { detached: true, stdio: "ignore" });`,
+    `writeFileSync(${JSON.stringify(join(dataDir, "postmaster.pid"))}, String(w.pid));`,
+    `w.unref();`,
   ].join("");
 
   const restart = opts.restart ?? "fail";
@@ -244,8 +271,17 @@ function writeFakeAutopg(opts: {
       "fi",
       'if [ "$1" = "postmaster" ]; then',
       ...(postmaster === "listen"
-        ? [`  exec ${JSON.stringify(process.execPath)} -e ${JSON.stringify(listenJs)}`]
-        : ['  echo "fake autopg: postmaster refused" >&2', "  exit 1"]),
+        ? [
+            '  echo "fake autopg: postmaster starting"',
+            `  exec ${JSON.stringify(process.execPath)} -e ${JSON.stringify(listenJs)}`,
+          ]
+        : postmaster === "lose"
+          ? [
+              `  ${JSON.stringify(process.execPath)} -e ${JSON.stringify(spawnWinnerJs)}`,
+              '  echo "FATAL: lock file postmaster.pid already exists" >&2',
+              "  exit 1",
+            ]
+          : ['  echo "fake autopg: postmaster refused" >&2', "  exit 1"]),
       "fi",
       'echo "fake autopg: $1 refused" >&2',
       "exit 1",
@@ -253,7 +289,7 @@ function writeFakeAutopg(opts: {
     ].join("\n"),
     { mode: 0o755 },
   );
-  return { bin, log, dir, dataDir, socketDir, pidFile };
+  return { bin, log, dir, dataDir, socketDir, logsDir, pidFile };
 }
 
 function killPidFile(pidFile: string): void {
@@ -327,6 +363,10 @@ test("ensureHostRunning revives a dead registered host via postmaster, not pm2 i
       "restart",
       `postmaster --port ${port} --data ${fake.dataDir} --socket-dir ${fake.socketDir}`,
     ]);
+    // Unsupervised revive keeps its output next to autopg's own logs.
+    expect(readFileSync(join(fake.logsDir, "cedarpg-postmaster.log"), "utf8")).toContain(
+      "postmaster starting",
+    );
   } finally {
     killPidFile(fake.pidFile);
     rmSync(fake.dir, { recursive: true, force: true });
@@ -377,6 +417,79 @@ test("ensureHostRunning treats pm2-less restart (respawned daemon, no TCP) as a 
     ]);
   } finally {
     killPidFile(fake.pidFile);
+    rmSync(fake.dir, { recursive: true, force: true });
+  }
+});
+
+test("ensureHostRunning omits --socket-dir when autopg does not report one", async () => {
+  const port = await freePort();
+  const fake = writeFakeAutopg({
+    port,
+    postmaster: "listen",
+    report: { socketDir: false },
+  });
+
+  try {
+    await withLocalPolicy(async () => {
+      expect((await ensureHostRunning(fake.bin)).port).toBe(port);
+    });
+    expect(calls(fake.log)).toContain(`postmaster --port ${port} --data ${fake.dataDir}`);
+  } finally {
+    killPidFile(fake.pidFile);
+    rmSync(fake.dir, { recursive: true, force: true });
+  }
+});
+
+test("ensureHostRunning never guesses a data dir autopg does not report", async () => {
+  const port = await freePort();
+  const fake = writeFakeAutopg({ port, postmaster: "listen", report: { dataDir: false } });
+
+  try {
+    await withLocalPolicy(async () => {
+      await expect(ensureHostRunning(fake.bin)).rejects.toThrow(
+        /autopg postmaster: not attempted \(autopg status --json reports no dataDir\)/,
+      );
+    });
+    expect(calls(fake.log).some((c) => c.startsWith("postmaster"))).toBe(false);
+  } finally {
+    rmSync(fake.dir, { recursive: true, force: true });
+  }
+});
+
+test("ensureHostRunning waits for a live data-dir owner instead of spawning a competitor", async () => {
+  const port = await freePort();
+  const fake = writeFakeAutopg({ port, postmaster: "listen" });
+  // pm2 (or another acquire) is mid-start: postmaster.pid is live, TCP not yet.
+  writeFileSync(join(fake.dataDir, "postmaster.pid"), `${process.pid}\n${fake.dataDir}\n`);
+  const server = createServer();
+  const late = setTimeout(() => server.listen(port, "127.0.0.1"), 300);
+
+  try {
+    await withLocalPolicy(async () => {
+      expect((await ensureHostRunning(fake.bin)).port).toBe(port);
+    });
+    expect(calls(fake.log)).toEqual(["status --json", "restart"]);
+  } finally {
+    clearTimeout(late);
+    server.close();
+    rmSync(fake.dir, { recursive: true, force: true });
+  }
+});
+
+test("ensureHostRunning attaches to the winner after losing the data-dir lock", async () => {
+  const port = await freePort();
+  const fake = writeFakeAutopg({ port, postmaster: "lose" });
+  const ownerPidFile = join(fake.dataDir, "postmaster.pid");
+
+  try {
+    await withLocalPolicy(async () => {
+      expect((await ensureHostRunning(fake.bin)).port).toBe(port);
+    });
+    expect(calls(fake.log)).toContain(
+      `postmaster --port ${port} --data ${fake.dataDir} --socket-dir ${fake.socketDir}`,
+    );
+  } finally {
+    killPidFile(ownerPidFile);
     rmSync(fake.dir, { recursive: true, force: true });
   }
 });
