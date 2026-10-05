@@ -383,7 +383,8 @@ test("ensureHostRunning fail-closed on a dead registered port does not require p
       await expect(ensureHostRunning(fake.bin)).rejects.toThrow(
         new RegExp(
           `registered on 127\\.0\\.0\\.1:${port} but nothing is listening[\\s\\S]*` +
-            "autopg restart: exit 1[\\s\\S]*autopg postmaster --port",
+            "autopg restart: exit 1[\\s\\S]*autopg postmaster --port[\\s\\S]*" +
+            "Postmaster log: .*cedarpg-postmaster\\.log",
         ),
       );
     });

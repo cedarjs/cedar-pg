@@ -373,6 +373,7 @@ async function reviveRegisteredPostmaster(
     ...(socketDir ? ["--socket-dir", socketDir] : []),
   ];
   const label = `autopg ${args.join(" ")}`;
+  const logFile = logsDir ? join(logsDir, REVIVED_POSTMASTER_LOG) : undefined;
 
   if (liveDataDirOwner(dataDir) == null) {
     try {
@@ -383,12 +384,14 @@ async function reviveRegisteredPostmaster(
         args,
         port,
         readyMs: HOST_READY_MS,
-        ...(logsDir ? { logFile: join(logsDir, REVIVED_POSTMASTER_LOG) } : {}),
+        ...(logFile ? { logFile } : {}),
       });
       return null;
     } catch (err) {
       // Lost the data-dir lock to a concurrent start → wait for the winner below.
-      if (liveDataDirOwner(dataDir) == null) return `${label}: ${errorDetail(err)}`;
+      if (liveDataDirOwner(dataDir) == null) {
+        return `${label}: ${errorDetail(err)}${logFile ? `\nPostmaster log: ${logFile}` : ""}`;
+      }
     }
   }
 
