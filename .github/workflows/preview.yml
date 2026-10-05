@@ -21,4 +21,6 @@ jobs:
           cache: true
 
       - run: vp pack
-      - run: npx pkg-pr-new publish --pnpm
+      # Not npx: npm applies our package.json overrides (vite → vite-plus-core) and
+      # fails with EOVERRIDE against the direct vite devDependency.
+      - run: vp dlx pkg-pr-new publish --pnpm
