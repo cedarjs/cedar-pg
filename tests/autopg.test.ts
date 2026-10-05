@@ -2,6 +2,7 @@ import { expect, test } from "vite-plus/test";
 import {
   adminUrlFor,
   buildDatabaseUrl,
+  connectWhileStartingUp,
   parseHostStatus,
   rolePasswordFor,
   ROLE_PASSWORD_SCHEME,
@@ -16,16 +17,30 @@ test("parseHostStatus requires numeric port", () => {
 test("parseHostStatus reports the registered port without judging liveness", () => {
   // Real `autopg status --json` for an installed-but-stopped pm2 host: the port
   // is registration, not a listener. TCP is the only liveness gate (host.ts).
+  // Bare postmaster: status=stopped / pid=null while runtime.live=true — still
+  // not an attach/reinstall signal.
   const stopped = `{
     "installed": true,
     "name": "autopg-server",
     "status": "stopped",
     "pid": null,
     "port": 25432,
-    "runtime": null,
+    "dataDir": "/home/user/.autopg/data",
+    "socketDir": "/run/user/1000/pgserve",
+    "logsDir": "/home/user/.autopg/logs",
+    "runtime": { "live": true, "port": 25432, "pid": 1686040 },
     "supervisor": "pm2"
   }`;
-  expect(parseHostStatus(stopped)).toEqual({ port: 25432 });
+  expect(parseHostStatus(stopped)).toEqual({
+    port: 25432,
+    dataDir: "/home/user/.autopg/data",
+    socketDir: "/run/user/1000/pgserve",
+    logsDir: "/home/user/.autopg/logs",
+  });
+  // autopg reports `dataDir: null` when config.json is missing — absent, not guessed.
+  expect(parseHostStatus('{"port":25432,"dataDir":null,"socketDir":""}')).toEqual({
+    port: 25432,
+  });
   // Supervisor-specific status strings (systemd-user / launchd tiers) never
   // hide the port from attach.
   expect(parseHostStatus('{"port":55432,"status":"running"}')).toEqual({ port: 55432 });
@@ -84,4 +99,53 @@ test("buildDatabaseUrl derives password from roleName (TEMPLATE-clone safe)", ()
   expect(new URL(templateUrl).password).toBe(new URL(cloneUrl).password);
   expect(cloneUrl).not.toContain("host=");
   expect(cloneUrl).toContain("127.0.0.1");
+});
+
+function fakeClock(): { now: () => number; sleep: (ms: number) => Promise<void> } {
+  let t = 0;
+  return { now: () => t, sleep: async (ms) => void (t += ms) };
+}
+
+test("connectWhileStartingUp retries 57P03 until the postmaster is query-ready", async () => {
+  const startingUp = Object.assign(new Error("the database system is starting up"), {
+    code: "57P03",
+  });
+  let attempts = 0;
+  const client = await connectWhileStartingUp(
+    async () => {
+      attempts += 1;
+      if (attempts < 3) throw startingUp;
+      return "client";
+    },
+    { pollMs: 100, ...fakeClock() },
+  );
+  expect(client).toBe("client");
+  expect(attempts).toBe(3);
+});
+
+test("connectWhileStartingUp throws other errors at once and 57P03 after the grace period", async () => {
+  const refused = Object.assign(new Error("password authentication failed"), { code: "28P01" });
+  let attempts = 0;
+  await expect(
+    connectWhileStartingUp(async () => {
+      attempts += 1;
+      throw refused;
+    }, fakeClock()),
+  ).rejects.toBe(refused);
+  expect(attempts).toBe(1);
+
+  const startingUp = Object.assign(new Error("the database system is starting up"), {
+    code: "57P03",
+  });
+  attempts = 0;
+  await expect(
+    connectWhileStartingUp(
+      async () => {
+        attempts += 1;
+        throw startingUp;
+      },
+      { readyMs: 1_000, pollMs: 250, ...fakeClock() },
+    ),
+  ).rejects.toBe(startingUp);
+  expect(attempts).toBe(5);
 });

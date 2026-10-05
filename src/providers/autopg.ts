@@ -12,6 +12,19 @@ export type AutopgDiscovery = {
   bin: string;
 };
 
+/**
+ * Registered host from `autopg status --json`: attach target plus the paths a
+ * revive needs. Paths are only what autopg reports — never guessed, because
+ * autopg's own defaults depend on env (`AUTOPG_CONFIG_DIR`, `XDG_RUNTIME_DIR`).
+ */
+export type AutopgRegistration = HostStatusPaths & { host: AutopgDiscovery };
+
+type HostStatusPaths = {
+  dataDir?: string;
+  socketDir?: string;
+  logsDir?: string;
+};
+
 export const INSTALL_HINT =
   "autopg is required. Install with:\n" +
   "  curl -fsSL https://raw.githubusercontent.com/automagik-dev/autopg/main/install.sh | bash\n" +
@@ -48,17 +61,22 @@ export function requireAutopgBin(): string {
   return bin;
 }
 
+function optionalNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
 /**
- * Parse `autopg status --json` → the **registered** port. Throws only when the
- * output is not autopg status JSON.
+ * Parse `autopg status --json` → the **registered** port (and data/socket/logs
+ * dirs when present). Throws only when the output is not autopg status JSON.
  *
  * Registration is not liveness: autopg reports a port for a stopped host too,
  * and its `status` string is supervisor-specific (pm2 `online`, systemd-user /
- * launchd differ). Liveness is a TCP accept on the port, proven by the caller —
- * `acquire` does that before it connects.
+ * launchd differ). `runtime.live` is also not the attach gate — a bare
+ * postmaster can be query-ready while status stays `stopped` / `pid: null`.
+ * Liveness is a TCP accept on the port, proven by the caller (`acquire`).
  */
-export function parseHostStatus(json: string): { port: number } {
-  let parsed: { port?: unknown };
+export function parseHostStatus(json: string): HostStatusPaths & { port: number } {
+  let parsed: { port?: unknown } & { [K in keyof HostStatusPaths]?: unknown };
   try {
     parsed = JSON.parse(json) as typeof parsed;
   } catch {
@@ -67,7 +85,12 @@ export function parseHostStatus(json: string): { port: number } {
   if (typeof parsed.port !== "number") {
     throw new Error(`autopg status --json missing numeric port.\n${INSTALL_HINT}`);
   }
-  return { port: parsed.port };
+  const result: HostStatusPaths & { port: number } = { port: parsed.port };
+  for (const key of ["dataDir", "socketDir", "logsDir"] as const) {
+    const value = optionalNonEmptyString(parsed[key]);
+    if (value) result[key] = value;
+  }
+  return result;
 }
 
 /**
@@ -88,15 +111,9 @@ export function adminUrlFor(port: number, env: NodeJS.ProcessEnv = process.env):
   return `postgresql://${user}:${password}@127.0.0.1:${port}/postgres`;
 }
 
-/**
- * Discover the registered autopg host (port + admin URL) via `autopg status --json`.
- * Throws when autopg cannot be queried; does **not** prove a listener — probe TCP
- * (or use `acquire`, which does) before connecting.
- */
-export function discoverHost(bin = requireAutopgBin()): AutopgDiscovery {
-  let status: string;
+function readStatusJson(bin: string): string {
   try {
-    status = execFileSync(bin, ["status", "--json"], {
+    return execFileSync(bin, ["status", "--json"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -104,8 +121,25 @@ export function discoverHost(bin = requireAutopgBin()): AutopgDiscovery {
     const detail = err instanceof Error ? err.message : String(err);
     throw new Error(`Failed to query autopg status.\n${detail}\n${INSTALL_HINT}`);
   }
-  const { port } = parseHostStatus(status);
-  return { port, adminUrl: adminUrlFor(port), bin };
+}
+
+/**
+ * Discover the registered autopg host (attach target + reported data/socket/logs
+ * dirs) via `autopg status --json`. Throws when autopg cannot be queried; does
+ * **not** prove a listener — probe TCP (or use `acquire`, which does) before connecting.
+ */
+export function discoverRegistration(bin = requireAutopgBin()): AutopgRegistration {
+  const { port, ...paths } = parseHostStatus(readStatusJson(bin));
+  return { host: { port, adminUrl: adminUrlFor(port), bin }, ...paths };
+}
+
+/**
+ * Discover the registered autopg host (port + admin URL) via `autopg status --json`.
+ * Throws when autopg cannot be queried; does **not** prove a listener — probe TCP
+ * (or use `acquire`, which does) before connecting.
+ */
+export function discoverHost(bin = requireAutopgBin()): AutopgDiscovery {
+  return discoverRegistration(bin).host;
 }
 
 function quoteIdent(name: string): string {
@@ -116,12 +150,55 @@ function quoteLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+/** Grace for a postmaster that accepts TCP but still answers 57P03 (startup / recovery). */
+const ADMIN_CONNECT_READY_MS = 30_000;
+const ADMIN_CONNECT_POLL_MS = 200;
+
+export type ConnectRetryOptions = {
+  readyMs?: number;
+  pollMs?: number;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+};
+
+/**
+ * Retry `connect` while Postgres answers `57P03` (cannot_connect_now: "the
+ * database system is starting up" / in recovery). TCP accept — the host
+ * liveness gate — comes before query-ready, so a freshly revived or crash-
+ * recovering postmaster needs this. Any other error is thrown immediately.
+ */
+export async function connectWhileStartingUp<T>(
+  connect: () => Promise<T>,
+  opts: ConnectRetryOptions = {},
+): Promise<T> {
+  const now = opts.now ?? Date.now;
+  const pause = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const deadline = now() + (opts.readyMs ?? ADMIN_CONNECT_READY_MS);
+  for (;;) {
+    try {
+      return await connect();
+    } catch (err) {
+      if ((err as { code?: unknown }).code !== "57P03" || now() >= deadline) throw err;
+    }
+    await pause(opts.pollMs ?? ADMIN_CONNECT_POLL_MS);
+  }
+}
+
 async function withAdminClient<T>(
   adminUrl: string,
   fn: (client: pg.Client) => Promise<T>,
 ): Promise<T> {
-  const client = new pg.Client({ connectionString: adminUrl });
-  await client.connect();
+  // A pg.Client cannot reconnect after a failed connect — new client per attempt.
+  const client = await connectWhileStartingUp(async () => {
+    const attempt = new pg.Client({ connectionString: adminUrl });
+    try {
+      await attempt.connect();
+      return attempt;
+    } catch (err) {
+      await attempt.end().catch(() => {});
+      throw err;
+    }
+  });
   try {
     return await fn(client);
   } finally {
