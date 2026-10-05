@@ -2,7 +2,7 @@
 
 Worktree-isolated local Postgres for Vite+, Nx, and CedarJS. The host is [autopg](https://github.com/automagik-dev/autopg) (embedded PostgreSQL 18). cedar-pg creates one database and role per git worktree so parallel checkouts do not share a DB.
 
-Published as `@cedarjs/pg`. CLI: `cedarpg`. Beta (`0.2.0-beta.0`, `beta` dist-tag). Public APIs may still change.
+Published as `@cedarjs/pg`. CLI: `cedarpg`. Beta (`0.2.0-beta.1`, `beta` dist-tag). Public APIs may still change.
 
 | Layer    | Owns                                                                              |
 | -------- | --------------------------------------------------------------------------------- |

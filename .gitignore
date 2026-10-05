@@ -6,3 +6,6 @@ coverage
 .cedarpg
 *.log
 .vite-hooks/_
+.beads/
+.beads.gate.lock
+.bercail/
