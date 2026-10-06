@@ -156,7 +156,7 @@ export async function attach(options: {
   mode: DbMode;
 }): Promise<{ lease: Lease; databaseUrl: string }> {
   const root = resolveRoot(options.root);
-  const mode = options.mode;
+  const { mode } = options;
   const lease = readLease(root, mode);
   if (!lease) {
     throw new Error(

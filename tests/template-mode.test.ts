@@ -237,7 +237,7 @@ test("cloneWorkerDatabase reaches the DB with reuse from every test file", async
 
 test("cloneWorkerDatabase propagates clone failures", async () => {
   const cloneFromTemplateIfNeeded = vi.fn(async () => {
-    throw new Error("database already exists: cpg_tmpl_c_1 (owned by someone_else, not x)");
+    throw new Error("database already exists: cpg_tmpl_c_1 (owned by someone_else)");
   });
 
   await withWorkerEnv("1", () =>

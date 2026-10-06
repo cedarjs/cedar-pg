@@ -106,7 +106,7 @@ export async function cloneFromTemplate(options: CloneFromTemplateOptions): Prom
     templateName: lease.databaseName,
     databaseName,
     roleName: lease.roleName,
-    reuse: options.reuse === true,
+    reuse: options.reuse,
   });
 
   const databaseUrl = buildDatabaseUrl({

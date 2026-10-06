@@ -132,7 +132,6 @@ test("markTemplate + cloneFromTemplate use admin and lease role password", async
           templateName,
           databaseName: worker.databaseName,
           roleName: lease.roleName,
-          reuse: false,
         });
 
         await worker.dropClone();
@@ -348,7 +347,6 @@ test("markTemplate + cloneFromTemplate rediscover adminUrl when omitted", async 
           templateName,
           databaseName: worker.databaseName,
           roleName: `${templateName}_role`,
-          reuse: false,
         });
       },
     );

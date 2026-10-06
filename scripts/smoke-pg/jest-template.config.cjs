@@ -5,8 +5,7 @@
  * @type {import('jest').Config}
  */
 module.exports = {
-  testMatch: ["**/jest-template-*.test.cjs"],
+  testMatch: ["**/jest-template*.test.cjs"],
   globalSetup: "<rootDir>/jest-template.global.cjs",
   globalTeardown: require.resolve("@cedarjs/pg/jest-teardown"),
-  setupFilesAfterEnv: ["<rootDir>/jest-template.worker.cjs"],
 };

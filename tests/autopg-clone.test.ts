@@ -79,7 +79,7 @@ test("cloneDatabaseFromTemplate without reuse still fails on an existing clone",
   databases.set("cpg_tmpl_c_1", { datistemplate: false, owner: ROLE });
   await withFakePg(databases, async ({ cloneDatabaseFromTemplate }) => {
     await expect(cloneDatabaseFromTemplate(base)).rejects.toThrow(
-      /^database already exists: cpg_tmpl_c_1$/,
+      /^database already exists: cpg_tmpl_c_1 \(owned by cpg_tmpl_role\)$/,
     );
   });
 });
@@ -89,7 +89,7 @@ test("cloneDatabaseFromTemplate never reuses a clone owned by another role", asy
   databases.set("cpg_tmpl_c_1", { datistemplate: false, owner: "someone_else" });
   await withFakePg(databases, async ({ cloneDatabaseFromTemplate }) => {
     await expect(cloneDatabaseFromTemplate({ ...base, reuse: true })).rejects.toThrow(
-      /database already exists: cpg_tmpl_c_1 \(owned by someone_else, not cpg_tmpl_role\)/,
+      /database already exists: cpg_tmpl_c_1 \(owned by someone_else\)/,
     );
   });
 });

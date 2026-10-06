@@ -39,6 +39,8 @@ const tmp = installConsumer({
 });
 
 cpSync(FIXTURES, tmp, { recursive: true });
+// Second TEMPLATE test file for the same worker: proves clone reuse across files.
+cpSync(join(tmp, "jest-template.test.cjs"), join(tmp, "jest-template-2.test.cjs"));
 
 // Binary-only install when missing — never postinstall / install.sh / pm2.
 const pathEnv = ensureAutopgBinary(process.env);
