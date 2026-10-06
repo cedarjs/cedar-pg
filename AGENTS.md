@@ -47,7 +47,7 @@ tests/          # unit tests (mock / no Postgres unless testing SQL helpers care
 scripts/        # postinstall, CI binary install, smoke harnesses
 ```
 
-Pack entries and npm `exports` are declared in `vite.config.ts` `pack.entry` and `package.json` `exports`. Plan paths stay flat (`./vite-plus`, `./nx`, …) — do not expose `./adapters/…` in the public map. When adding a public entry:
+Pack entries and npm `exports` are declared in `vite.config.ts` `pack.entry` and `package.json` `exports`. Plan paths stay flat (`./vite-plus`, `./jest`, …) — do not expose `./adapters/…` in the public map. When adding a public entry:
 
 1. Add `src/…` module
 2. Register `pack.entry` in `vite.config.ts`
@@ -82,7 +82,7 @@ Keep logic in the canonical layer. Prefer reuse over one-off branches in adapter
 | Lease read/write / registry                     | `src/core/lease.ts`                                                                |
 | Host attach / local recovery / ephemeral start  | `src/providers/host.ts` (internal; `ensureHostRunning` is **not** a public export) |
 | SQL / autopg CLI / URLs / role password         | `src/providers/autopg.ts`                                                          |
-| Shared Vite+/Nx task strings                    | `src/adapters/tasks.ts` (`cedarPgLifecycleTargets`, `cedarPgRunCommand`)           |
+| Vite+ lifecycle task strings                    | `src/adapters/tasks.ts` (`cedarPgLifecycleTargets`)                                |
 | Runner TEMPLATE orchestration + migrate hook    | `src/adapters/template-mode.ts` → thin Jest/Vitest wrappers                        |
 
 **Adapters should be thin.** They compose core + policy. Do not reimplement skip/env/host logic inside Jest/Vitest/Nx helpers. If both `acquireIfNeeded` and `cloneFromTemplateIfNeeded` need the same gate, extend `runIfNeeded` — do not copy conditionals.
@@ -93,17 +93,17 @@ Keep logic in the canonical layer. Prefer reuse over one-off branches in adapter
 
 ## Env and policy (easy to get wrong)
 
-| Mechanism                                          | Meaning                                                                                                   |
-| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `CEDAR_PG=0`                                       | Opt-out auto-acquire in adapters                                                                          |
-| External `TEST_DATABASE_URL` / `DATABASE_URL`      | Escape hatch → skip acquire (unless managed `cpg_*` / placeholders)                                       |
-| `CEDAR_PG_FORCE=1` / `{ force: true }` / `--force` | Ignore external-URL escape hatch                                                                          |
-| `loadTestEnv` / `loadDevEnv`                       | Fill **undefined** keys by default; `{ overwrite: true }` or `@cedarjs/pg/dev-env` to beat ambient `.env` |
-| `cedarpg run`                                      | Always force-sets child `DATABASE_URL` (Nx `dependsOn` does **not** forward env)                          |
+| Mechanism                                          | Meaning                                                                                                     |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `CEDAR_PG=0`                                       | Opt-out auto-acquire in adapters                                                                            |
+| External `TEST_DATABASE_URL` / `DATABASE_URL`      | Escape hatch → skip acquire (unless managed `cpg_*` / placeholders)                                         |
+| `CEDAR_PG_FORCE=1` / `{ force: true }` / `--force` | Ignore external-URL escape hatch                                                                            |
+| `loadTestEnv` / `loadDevEnv`                       | Fill **undefined** keys by default; `{ overwrite: true }` or `@cedarjs/pg/dev-env` to beat ambient `.env`   |
+| `cedarpg run` / `run --attach`                     | Always force-sets child `DATABASE_URL` (Nx `dependsOn` does **not** forward env); `--attach` never acquires |
 
 These are different knobs. Do not collapse `force`, `overwrite`, and `run` into one boolean flag scattered across call sites.
 
-Nx canonical consumer shape: one `db:ready` / `createAcquireTask`, then wrap children with `cedarpg run --mode=… --force -- <cmd>`. Never recommend concurrent `acquire`/`run` on the same worktree (DDL races).
+Nx canonical consumer shape: one `db:ready` (`cedarpg run -- <migrate>` or `createAcquireTask`; the only DDL), then children either preload `@cedarjs/pg/dev-env` or wrap with attach-only `cedarpg run --attach --mode=… -- <cmd>`. There is no `@cedarjs/pg/nx` entry: Nx targets are plain `cedarpg` command strings in docs. Do not reintroduce target scaffolding or string-builder helpers, and do not recommend Nx `envFile` (ambient `.env` wins). Nx docs stay generic: no consumer-app scripts or tool assumptions. `attach` (`src/core/lifecycle.ts`) reads the lease + one TCP probe: never acquire, DDL, or host revive. Never recommend concurrent `acquire`/plain `run` on the same worktree (DDL races); concurrent `run --attach` is fine.
 
 ## Testing expectations
 
@@ -111,6 +111,7 @@ Nx canonical consumer shape: one `db:ready` / `createAcquireTask`, then wrap chi
 - **Postgres-backed** confidence is `vp run smoke:pg` (and CI). Prefer extending that harness over inventing ad-hoc live-DB tests in unit suites.
 - Prefer testing pure policy/naming/lease parsers with fixtures; mock process/env at the boundary.
 - When changing dispose/TEMPLATE/clone semantics, update `tests/lifecycle-dispose.test.ts`, `tests/template-*.test.ts`, and README troubleshooting if symptoms change.
+- Clone reuse is DB-backed (`reuse: true` → `42P04` + owner check in `cloneDatabaseFromTemplate`), never an in-memory memo: Jest resets `globalThis` per test file. TEMPLATE setup acquires `fresh` (role-scoped drop before migrate). `cloneWorkerDatabase` then resets the clone on every file with `TRUNCATE … RESTART IDENTITY` (`truncateUserTables` in `providers/autopg.ts`; `reset: "none"` opts out) — never on a skipped/external URL; `smoke:pg` asserts the second file sees `id = 1`. `smoke:pg` covers both with two Jest files in one worker after a seeded crashed run.
 
 ## Packaging checklist
 

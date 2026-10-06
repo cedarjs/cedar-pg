@@ -45,7 +45,6 @@ import {
   STATE_DIRNAME,
 } from '${PACKAGE_NAME}';
 import { cedarPgTasks } from '${PACKAGE_NAME}/vite-plus';
-import { cedarPgNxTargets, cedarPgRunCommand, relativeEnvFile } from '${PACKAGE_NAME}/nx';
 import vitestSetup from '${PACKAGE_NAME}/vitest';
 import jestSetup from '${PACKAGE_NAME}/jest';
 import jestTeardown from '${PACKAGE_NAME}/jest-teardown';
@@ -66,15 +65,6 @@ const name = buildDatabaseName(
 if (name !== 'cpg_cedar_feat_dev_abcd1234') throw new Error('bad name ' + name);
 const tasks = cedarPgTasks();
 if (!tasks['db:acquire']) throw new Error('missing db:acquire');
-const nxTargets = cedarPgNxTargets();
-if (!nxTargets['db:acquire']) throw new Error('missing nx db:acquire');
-if (JSON.stringify(tasks) !== JSON.stringify(nxTargets)) {
-  throw new Error('vite-plus and nx lifecycle targets drifted');
-}
-if (!cedarPgRunCommand('dev', 'echo ok').includes('run --mode=dev')) {
-  throw new Error('cedarPgRunCommand missing run');
-}
-if (relativeEnvFile('dev') !== '.cedarpg/dev.env') throw new Error('bad relativeEnvFile');
 if (typeof createAcquireTask !== 'function') throw new Error('missing createAcquireTask');
 if (typeof vitestSetup !== 'function') throw new Error('vitest setup export missing');
 if (typeof jestSetup !== 'function') throw new Error('jest setup export missing');

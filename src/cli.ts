@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { CLI_NAME } from "./core/constants.ts";
-import { acquire, dispose, gc } from "./core/lifecycle.ts";
+import { acquire, attach, dispose, gc } from "./core/lifecycle.ts";
 import { resolveDevStatus } from "./core/status.ts";
 import type { DbMode } from "./core/naming.ts";
 import { runAttached } from "./adapters/child.ts";
@@ -12,7 +12,7 @@ function printHelp(): void {
 
 Usage:
   ${CLI_NAME} acquire --mode=dev|test [--root <path>] [--force] [--json] [--print-env]
-  ${CLI_NAME} run --mode=dev|test [--root <path>] [--force] -- <cmd…>
+  ${CLI_NAME} run --mode=dev|test [--root <path>] [--force] [--attach] -- <cmd…>
   ${CLI_NAME} dispose [--mode=dev|test] [--root <path>]
   ${CLI_NAME} gc [--json]
   ${CLI_NAME} print-url [--mode=dev|test] [--root <path>]
@@ -27,6 +27,9 @@ Modes:
 run:
   Acquire, set DATABASE_URL (+ TEST_DATABASE_URL in test) on the child, exec <cmd…>.
   --force sets CEDAR_PG_FORCE (escape hatch); child env overwrite is always on.
+  --attach reads the existing lease instead: no acquire, no role/DB DDL, fails
+  when there is no lease or the host is not listening. Use it for children that
+  run after one db:ready (safe to run concurrently).
 
 status / studio:
   Read-only lease inspection (no acquire). studio runs Prisma or Drizzle Kit Studio
@@ -52,6 +55,7 @@ type ParsedArgs = {
   json?: boolean;
   printEnv?: boolean;
   force?: boolean;
+  attach?: boolean;
   help?: boolean;
   prisma?: boolean;
   drizzle?: boolean;
@@ -76,6 +80,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     else if (a === "--json") out.json = true;
     else if (a === "--print-env") out.printEnv = true;
     else if (a === "--force") out.force = true;
+    else if (a === "--attach") out.attach = true;
     else if (a === "--prisma") out.prisma = true;
     else if (a === "--drizzle") out.drizzle = true;
     else if (a.startsWith("--mode=")) out.mode = parseMode(a.slice(7));
@@ -208,16 +213,14 @@ async function main(): Promise<number> {
     if (args.cmd === "run") {
       if (args.force) process.env.CEDAR_PG_FORCE = "1";
       const mode = args.mode ?? "dev";
-      const result = await acquire({
-        root: args.root,
-        mode,
-        setEnv: true,
-      });
+      const { databaseUrl } = args.attach
+        ? await attach({ root: args.root, mode })
+        : await acquire({ root: args.root, mode, setEnv: true });
       const childEnv: NodeJS.ProcessEnv = {
         ...process.env,
-        DATABASE_URL: result.databaseUrl,
+        DATABASE_URL: databaseUrl,
       };
-      if (mode === "test") childEnv.TEST_DATABASE_URL = result.databaseUrl;
+      if (mode === "test") childEnv.TEST_DATABASE_URL = databaseUrl;
       return await runChild(args.child ?? [], childEnv);
     }
 

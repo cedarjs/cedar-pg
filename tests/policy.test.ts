@@ -47,7 +47,7 @@ test("isExternalDatabaseEscapeHatch ignores file and cedarpg urls", () => {
 
 test("isExternalDatabaseEscapeHatch ignores unset template placeholders", () => {
   expect(
-    isExternalDatabaseEscapeHatch("postgresql://{yourMachine}@localhost:5432/leftlane_app_test"),
+    isExternalDatabaseEscapeHatch("postgresql://{yourMachine}@localhost:5432/myapp_test"),
   ).toBe(false);
   expect(isExternalDatabaseEscapeHatch("postgresql://<user>:<password>@localhost:5432/app")).toBe(
     false,
@@ -113,7 +113,7 @@ test("resolveAcquireSkip does not treat template placeholder URLs as escape hatc
   expect(
     resolveAcquireSkip({
       disabled: false,
-      url: "postgresql://{yourMachine}@localhost:5432/leftlane_app_test",
+      url: "postgresql://{yourMachine}@localhost:5432/myapp_test",
     }),
   ).toEqual({ skip: false });
 });

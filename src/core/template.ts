@@ -54,6 +54,12 @@ export type CloneFromTemplateOptions = {
    */
   name?: string;
   /**
+   * Keep an existing `<template>_c_<name>` owned by the lease role instead of
+   * failing with `database already exists` (default false). Worker adapters pass
+   * true so every test file in one worker attaches to the same clone.
+   */
+  reuse?: boolean;
+  /**
    * Inject DATABASE_URL / TEST_DATABASE_URL for this clone (default false).
    * Host `cloneFromTemplateIfNeeded` defaults true; worker adapters pass true explicitly.
    */
@@ -79,6 +85,7 @@ export type CloneResult = {
  * Reuses the template role so `databaseUrl` passwords stay valid (scheme v2).
  * Provider rejects when the leased DB is not marked TEMPLATE.
  * Port comes from the lease; admin URL is passed through or rediscovered.
+ * An existing clone datname fails unless `reuse` is set and the lease role owns it.
  */
 export async function cloneFromTemplate(options: CloneFromTemplateOptions): Promise<CloneResult> {
   const identity = resolveWorktreeIdentity(options.root);
@@ -97,6 +104,7 @@ export async function cloneFromTemplate(options: CloneFromTemplateOptions): Prom
     templateName: lease.databaseName,
     databaseName,
     roleName: lease.roleName,
+    reuse: options.reuse,
   });
 
   const databaseUrl = buildDatabaseUrl({

@@ -12,7 +12,8 @@ export type {
 } from "./template-mode.ts";
 
 /**
- * Jest globalSetup (template mode).
+ * Jest globalSetup (template mode). Drops crashed-run leftovers under this
+ * worktree's test role, then acquire → migrate → markTemplate.
  *
  * ```js
  * // jest.cedar-global.cjs
@@ -24,7 +25,8 @@ export type {
  * // process.env.CEDAR_PG_FORCE = "1";
  * globalSetup: "<rootDir>/jest.cedar-global.cjs",
  * globalTeardown: require.resolve("@cedarjs/pg/jest-teardown"),
- * // Prefer setupFilesAfterEnv + beforeAll; setupFiles also works (memo is process-scoped).
+ * // Runs per test file; every file in a worker reuses that worker's clone,
+ * // truncated with RESTART IDENTITY first (`cloneWorkerDatabase({ reset: "none" })` opts out).
  * setupFilesAfterEnv: ["<rootDir>/jest.cedar-worker.cjs"],
  *
  * // jest.cedar-worker.cjs

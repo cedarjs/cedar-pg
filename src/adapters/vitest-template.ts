@@ -12,7 +12,9 @@ export type {
 } from "./template-mode.ts";
 
 /**
- * Vitest globalSetup (template mode). Returns teardown that disposes TEMPLATE + clones.
+ * Vitest globalSetup (template mode). Drops crashed-run leftovers under this
+ * worktree's test role, then acquire → migrate → markTemplate. Returns teardown
+ * that disposes TEMPLATE + clones.
  *
  * ```ts
  * // vitest.cedar-global.ts
@@ -27,7 +29,8 @@ export type {
  *   },
  * })
  *
- * // vitest.cedar-worker.ts — local ESM (pack emits CJS+ESM; top-level await lives here)
+ * // vitest.cedar-worker.ts — local ESM (pack emits CJS+ESM; top-level await lives here).
+ * // Runs per test file: reuses the worker clone, truncated with RESTART IDENTITY first.
  * import { cloneWorkerDatabase } from "@cedarjs/pg/vitest/template";
  * await cloneWorkerDatabase();
  * ```

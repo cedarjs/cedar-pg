@@ -274,15 +274,23 @@ export async function setDatabaseIsTemplate(opts: {
   });
 }
 
+/** Postgres `duplicate_database`: CREATE DATABASE hit an existing datname. */
+const DUPLICATE_DATABASE = "42P04";
+
 /**
  * CREATE DATABASE … TEMPLATE … OWNER via admin connection.
  * Test roles are LOGIN-only; workers cannot CREATE DATABASE themselves.
+ *
+ * With `reuse`, an existing `databaseName` owned by `roleName` is kept as-is:
+ * a worker clone made earlier in this run by another test file.
+ * An existing datname owned by any other role always fails: it is not ours.
  */
 export async function cloneDatabaseFromTemplate(opts: {
   adminUrl: string;
   templateName: string;
   databaseName: string;
   roleName: string;
+  reuse?: boolean;
 }): Promise<void> {
   await withAdminClient(opts.adminUrl, async (client) => {
     const tmpl = await client.query<{ datistemplate: boolean }>(
@@ -296,15 +304,61 @@ export async function cloneDatabaseFromTemplate(opts: {
       throw new Error(`database is not a TEMPLATE; run markTemplate first: ${opts.templateName}`);
     }
 
-    const exists = await client.query("SELECT 1 FROM pg_database WHERE datname = $1", [
-      opts.databaseName,
-    ]);
-    if (exists.rowCount && exists.rowCount > 0) {
-      throw new Error(`database already exists: ${opts.databaseName}`);
+    try {
+      await client.query(
+        `CREATE DATABASE ${quoteIdent(opts.databaseName)} WITH TEMPLATE ${quoteIdent(opts.templateName)} OWNER ${quoteIdent(opts.roleName)}`,
+      );
+      return;
+    } catch (err) {
+      if ((err as { code?: unknown }).code !== DUPLICATE_DATABASE) throw err;
     }
-    await client.query(
-      `CREATE DATABASE ${quoteIdent(opts.databaseName)} WITH TEMPLATE ${quoteIdent(opts.templateName)} OWNER ${quoteIdent(opts.roleName)}`,
+    const existing = await client.query<{ owner: string }>(
+      `SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = $1`,
+      [opts.databaseName],
     );
+    const owner = existing.rows[0]?.owner;
+    if (opts.reuse && owner === opts.roleName) return;
+    throw new Error(
+      `database already exists: ${opts.databaseName} (owned by ${owner ?? "unknown"})`,
+    );
+  });
+}
+
+/**
+ * Empty every user table in `databaseName` with one
+ * `TRUNCATE … RESTART IDENTITY`, so serial / identity columns start at 1 again.
+ *
+ * Runs as admin against that database. Skips system schemas, temp tables, and
+ * tables an extension owns (e.g. PostGIS `spatial_ref_sys`); partitions are covered by
+ * their parent. No `CASCADE`: every user table is in the one statement, so no
+ * FK target is missing from it.
+ */
+export async function truncateUserTables(opts: {
+  adminUrl: string;
+  databaseName: string;
+}): Promise<string[]> {
+  const url = new URL(opts.adminUrl);
+  url.pathname = `/${opts.databaseName}`;
+  return withAdminClient(url.toString(), async (client) => {
+    const result = await client.query<{ name: string }>(
+      `SELECT format('%I.%I', n.nspname, c.relname) AS name
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE c.relkind IN ('r', 'p')
+         AND NOT c.relispartition
+         AND c.relpersistence <> 't'
+         AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+         AND NOT EXISTS (
+           SELECT 1 FROM pg_depend d
+           WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e'
+         )
+       ORDER BY 1`,
+    );
+    const tables = result.rows.map((r) => r.name);
+    if (tables.length > 0) {
+      await client.query(`TRUNCATE TABLE ${tables.join(", ")} RESTART IDENTITY`);
+    }
+    return tables;
   });
 }
 

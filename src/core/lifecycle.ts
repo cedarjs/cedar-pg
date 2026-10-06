@@ -1,4 +1,5 @@
 import { mkdirSync, writeFileSync } from "node:fs";
+import { CLI_NAME } from "./constants.ts";
 import { buildDatabaseName, buildRoleName, type DbMode } from "./naming.ts";
 import {
   envPath,
@@ -11,9 +12,9 @@ import {
   type Lease,
 } from "./lease.ts";
 import { applyDatabaseUrlEnv, runIfNeeded, type ResolveAcquireSkipInput } from "./policy.ts";
-import { resolveWorktreeIdentity } from "./worktree.ts";
+import { resolveRoot, resolveWorktreeIdentity } from "./worktree.ts";
 import { buildDatabaseUrl, dropDatabasesOwnedByRole, ensureDatabase } from "../providers/autopg.ts";
-import { ensureHostRunning } from "../providers/host.ts";
+import { ensureHostRunning, waitForListener } from "../providers/host.ts";
 
 function writeEnvFile(root: string, mode: DbMode, databaseUrl: string): void {
   mkdirSync(leaseDir(root), { recursive: true, mode: 0o700 });
@@ -49,6 +50,13 @@ export type AcquireOptions = {
   mode: DbMode;
   /** Inject DATABASE_URL / TEST_DATABASE_URL into process.env (default true). */
   setEnv?: boolean;
+  /**
+   * Start from an empty database (default false): first DROP every database
+   * owned by this worktree's role for `mode` — the leased DB, TEMPLATE clones,
+   * crashed-run leftovers — then create it again. Scoped by the derived role
+   * name, so it works without a lease file and never touches other worktrees.
+   */
+  fresh?: boolean;
 };
 
 export type AcquireResult = {
@@ -79,6 +87,13 @@ export async function acquire(options: AcquireOptions): Promise<AcquireResult> {
   const roleName = buildRoleName(databaseName);
 
   const host = await ensureHostRunning();
+  if (options.fresh) {
+    await dropDatabasesOwnedByRole({
+      adminUrl: host.adminUrl,
+      roleName,
+      preferLast: databaseName,
+    });
+  }
   await ensureDatabase({
     adminUrl: host.adminUrl,
     databaseName,
@@ -130,6 +145,34 @@ export async function acquire(options: AcquireOptions): Promise<AcquireResult> {
   };
 }
 
+/**
+ * Attach-only: connection info from the lease a prior `acquire` wrote. Never
+ * acquires, never runs role/database DDL, never starts or revives the host —
+ * safe for many concurrent children after one `db:ready`. Throws when there is
+ * no lease or nothing accepts TCP on the leased port.
+ */
+export async function attach(options: {
+  root?: string;
+  mode: DbMode;
+}): Promise<{ lease: Lease; databaseUrl: string }> {
+  const root = resolveRoot(options.root);
+  const { mode } = options;
+  const lease = readLease(root, mode);
+  if (!lease) {
+    throw new Error(
+      `no ${mode} lease in ${root}; run \`${CLI_NAME} acquire --mode=${mode}\` ` +
+        `(or your db:ready target) first — attach never acquires`,
+    );
+  }
+  if (!(await waitForListener({ port: lease.port }))) {
+    throw new Error(
+      `${mode} lease ${lease.databaseName} points at 127.0.0.1:${lease.port}, but nothing is ` +
+        `listening; re-run \`${CLI_NAME} acquire --mode=${mode}\` to bring the host back`,
+    );
+  }
+  return { lease, databaseUrl: urlFromLease(lease) };
+}
+
 export type AcquireIfNeededOptions = AcquireOptions & ResolveAcquireSkipInput;
 
 export type AcquireIfNeededResult =
@@ -149,6 +192,7 @@ export async function acquireIfNeeded(
       root: options.root,
       mode: options.mode,
       setEnv: options.setEnv,
+      fresh: options.fresh,
     }),
   );
   if (outcome.status === "skipped") return outcome;

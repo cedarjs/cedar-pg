@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Added
+
+- CLI: `cedarpg run --attach --mode=dev|test -- <cmd…>`, attach-only run. It reads the existing lease and sets child `DATABASE_URL` (+ `TEST_DATABASE_URL` in test). It never acquires, never runs role/database DDL, and never starts the host. It fails before the child starts when there is no lease or nothing listens on the leased port.
+- `acquire({ fresh: true })` / `acquireIfNeeded({ fresh: true })` drop every database owned by this worktree's role for that mode first. That covers the leased DB, TEMPLATE clones, and leftovers from crashed runs, and it works even when the lease file is gone. The database is then created again empty.
+- `cloneWorkerDatabase({ reset })` (Jest / Vitest TEMPLATE) resets the worker clone at the start of every test file. The default `"truncate"` runs `TRUNCATE ... RESTART IDENTITY` over every user table, skipping system schemas, temp tables, and extension-owned tables. Rows from earlier files in the worker are gone, and `serial` / identity IDs restart at 1, so suites that expect `id = 1` work on a reused clone. This also clears rows that `migrate` seeded into the TEMPLATE. Pass `reset: "none"` to keep the clone's rows and reset on your own. A skipped clone (external URL, `CEDAR_PG=0`) is never truncated.
+- `cloneFromTemplate({ reuse: true })` keeps an existing `<template>_c_<name>` owned by the lease role instead of failing with `database already exists`. A clone name owned by any other role still fails, with the owner in the message.
+
+### Changed
+
+- Nx canonical shape: one `db:ready` acquires + migrates. Children either preload `@cedarjs/pg/dev-env` or use `cedarpg run --attach` (was `cedarpg run --force` per child). Children no longer run DDL, so concurrent dev servers and workers no longer race. Plain `cedarpg run` is unchanged for one-shot acquire + exec. The README Nx section is rewritten as a generic setup guide.
+- TEMPLATE setup (`setupTemplateMode`, Jest / Vitest `createGlobalSetup`) acquires with `fresh: true`. Leftover TEMPLATE / clone databases from a crashed run are dropped before `migrate`, so migrate always starts empty and consumers need no pre-cleanup.
+- TEMPLATE `cloneWorkerDatabase` truncates at the start of **every** test file by default, the first file on a fresh clone included, not only when it reuses a clone. Each worker clone used to start with the TEMPLATE's rows. Now every file starts with empty user tables, and rows that `migrate` seeded into the TEMPLATE are wiped, including bookkeeping tables such as `_prisma_migrations`. Migration: if your tests depend on seeded rows, either seed them in your worker setup after `cloneWorkerDatabase()`, or pass `cloneWorkerDatabase({ reset: "none" })` and reset on your own.
+
+### Removed
+
+- The `@cedarjs/pg/nx` entry is removed: `cedarPgRunCommand`, `cedarPgNxTargets`, the deprecated `nxTargetHints`, `CEDAR_PG_NX_ACQUIRE_DEV` / `CEDAR_PG_NX_ACQUIRE_TEST` / `CEDAR_PG_NX_DISPOSE_TEST`, `relativeEnvFile`, the `NxTargetHint` / `CedarPgNxTargetsOptions` types, and its `envFilePath` re-export. Nx targets are plain `cedarpg` command strings. Migration: replace `cedarPgRunCommand(mode, cmd)` with the string `cedarpg run --mode=<mode> -- <cmd>`. Nx `db:acquire` / `db:acquire-test` / `db:dispose-test` targets were greenfield scaffolding; write one `db:ready` target instead (see README → Nx). Import `envFilePath` from `@cedarjs/pg`. Replace Nx `envFile: relativeEnvFile(mode)` with the `@cedarjs/pg/dev-env` preload or `cedarpg run --attach`, since an ambient `.env` beat `envFile`. Vite+ `cedarPgTasks()` is unchanged.
+
+### Fixed
+
+- TEMPLATE `cloneWorkerDatabase` reuses the worker's `<template>_c_<workerId>` in Postgres across Jest test files. The `0.2.0-beta.0` fix cached the clone on `globalThis`, but Jest resets `globalThis` and the module registry for each test file. So the second file in a worker still ran `CREATE DATABASE` and failed with `database already exists`. The in-memory memo is removed; the database is the source of truth. As a result, calling it again with a different `root` / `name` in one process no longer throws: each call clones or reuses its own name. `smoke:pg` now runs two Jest files in one worker, after a seeded crashed run.
+
 ## 0.2.0-beta.1
 
 Revive a registered autopg host without pm2.
