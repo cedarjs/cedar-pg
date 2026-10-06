@@ -13,6 +13,7 @@
 
 - Nx canonical shape: one `db:ready` acquires + migrates. Children either preload `@cedarjs/pg/dev-env` or use `cedarpg run --attach` (was `cedarpg run --force` per child). Children no longer run DDL, so concurrent dev servers and workers no longer race. Plain `cedarpg run` is unchanged for one-shot acquire + exec. The README Nx section is rewritten as a generic setup guide.
 - TEMPLATE setup (`setupTemplateMode`, Jest / Vitest `createGlobalSetup`) acquires with `fresh: true`. Leftover TEMPLATE / clone databases from a crashed run are dropped before `migrate`, so migrate always starts empty and consumers need no pre-cleanup.
+- TEMPLATE `cloneWorkerDatabase` truncates at the start of **every** test file by default, the first file on a fresh clone included, not only when it reuses a clone. Each worker clone used to start with the TEMPLATE's rows. Now every file starts with empty user tables, and rows that `migrate` seeded into the TEMPLATE are wiped, including bookkeeping tables such as `_prisma_migrations`. Migration: if your tests depend on seeded rows, either seed them in your worker setup after `cloneWorkerDatabase()`, or pass `cloneWorkerDatabase({ reset: "none" })` and reset on your own.
 
 ### Removed
 
