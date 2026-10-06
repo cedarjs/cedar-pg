@@ -45,7 +45,12 @@ import {
   STATE_DIRNAME,
 } from '${PACKAGE_NAME}';
 import { cedarPgTasks } from '${PACKAGE_NAME}/vite-plus';
-import { cedarPgNxTargets, cedarPgRunCommand, relativeEnvFile } from '${PACKAGE_NAME}/nx';
+import {
+  cedarPgAttachCommand,
+  cedarPgNxTargets,
+  cedarPgRunCommand,
+  relativeEnvFile,
+} from '${PACKAGE_NAME}/nx';
 import vitestSetup from '${PACKAGE_NAME}/vitest';
 import jestSetup from '${PACKAGE_NAME}/jest';
 import jestTeardown from '${PACKAGE_NAME}/jest-teardown';
@@ -73,6 +78,9 @@ if (JSON.stringify(tasks) !== JSON.stringify(nxTargets)) {
 }
 if (!cedarPgRunCommand('dev', 'echo ok').includes('run --mode=dev')) {
   throw new Error('cedarPgRunCommand missing run');
+}
+if (!cedarPgAttachCommand('dev', 'echo ok').includes('run --attach --mode=dev')) {
+  throw new Error('cedarPgAttachCommand missing run --attach');
 }
 if (relativeEnvFile('dev') !== '.cedarpg/dev.env') throw new Error('bad relativeEnvFile');
 if (typeof createAcquireTask !== 'function') throw new Error('missing createAcquireTask');

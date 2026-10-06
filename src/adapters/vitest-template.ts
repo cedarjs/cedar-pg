@@ -12,7 +12,9 @@ export type {
 } from "./template-mode.ts";
 
 /**
- * Vitest globalSetup (template mode). Returns teardown that disposes TEMPLATE + clones.
+ * Vitest globalSetup (template mode). Drops crashed-run leftovers under this
+ * worktree's test role, then acquire → migrate → markTemplate. Returns teardown
+ * that disposes TEMPLATE + clones.
  *
  * ```ts
  * // vitest.cedar-global.ts

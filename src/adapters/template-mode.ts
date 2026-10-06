@@ -18,7 +18,10 @@ export type SetupTemplateModeOptions = {
 };
 
 /**
- * Runner orchestration: acquire → migrate → markTemplate.
+ * Runner orchestration: fresh acquire → migrate → markTemplate.
+ * The acquire is `fresh`: leftovers a crashed earlier run left under this
+ * worktree's test role (TEMPLATE, worker clones) are dropped first, so migrate
+ * always starts from an empty database and no consumer pre-cleanup is needed.
  * After acquire succeeds, migrate + markTemplate are all-or-nothing: any failure
  * best-effort disposes the lease so Vitest (no separate teardown) does not leak.
  * Programmatic apps that do not need a migrate hook should call core
@@ -30,6 +33,7 @@ export async function setupTemplateMode(
   const result = await acquireIfNeeded({
     root: options.root,
     mode: "test",
+    fresh: true,
     setEnv: options.setEnv !== false,
   });
   if (result.status !== "acquired") return result;
@@ -69,70 +73,26 @@ export type CloneWorkerDatabaseOptions = {
   name?: string;
 };
 
-/** Survives Jest `setupFiles` module reloads (module-scoped `let` does not). */
-const CLONE_WORKER_MEMO = Symbol.for("@cedarjs/pg/cloneWorkerDatabase");
-
-type CloneWorkerMemo = {
-  promise: Promise<void>;
-  key: string;
-};
-
-type GlobalWithCloneWorkerMemo = typeof globalThis & {
-  [CLONE_WORKER_MEMO]?: CloneWorkerMemo;
-};
-
-function readCloneWorkerMemo(): CloneWorkerMemo | undefined {
-  return (globalThis as GlobalWithCloneWorkerMemo)[CLONE_WORKER_MEMO];
-}
-
-function writeCloneWorkerMemo(memo: CloneWorkerMemo | undefined): void {
-  const g = globalThis as GlobalWithCloneWorkerMemo;
-  if (memo === undefined) delete g[CLONE_WORKER_MEMO];
-  else g[CLONE_WORKER_MEMO] = memo;
-}
-
-function resolveWorkerName(options: CloneWorkerDatabaseOptions): string {
-  return (
-    options.name ?? process.env.JEST_WORKER_ID ?? process.env.VITEST_POOL_ID ?? String(process.pid)
-  );
-}
-
-function workerOptionsKey(root: string | undefined, name: string): string {
-  return `${root ?? ""}\0${name}`;
-}
-
 /**
- * Process-once per-worker clone (JEST_WORKER_ID / VITEST_POOL_ID / pid by default).
- * Uses `cloneFromTemplateIfNeeded` (same skip policy as `acquireIfNeeded`) with `setEnv: true`.
- * First call wins for `root`/`name`; conflicting later calls throw.
+ * One clone per worker (`<template>_c_<JEST_WORKER_ID | VITEST_POOL_ID | pid>`),
+ * shared by every test file that worker runs. Call it once per test file
+ * (`beforeAll` in `setupFilesAfterEnv`, or a Vitest `setupFiles` module).
  *
- * Memo lives on `globalThis` so Jest `setupFiles` (module reload per file) still
- * shares one clone per worker. `setupFilesAfterEnv` + `beforeAll` also works.
+ * The first file creates the clone. Later files reuse it (`reuse: true`): the
+ * database itself is the source of truth, so this holds even though Jest gives
+ * each file a fresh `globalThis` and module registry. Clones left over from a
+ * crashed earlier run cannot leak in — `setupTemplateMode` drops them first.
+ *
+ * Uses `cloneFromTemplateIfNeeded` (same skip policy as `acquireIfNeeded`) with `setEnv: true`.
  */
-export function cloneWorkerDatabase(options: CloneWorkerDatabaseOptions = {}): Promise<void> {
-  const name = resolveWorkerName(options);
-  const key = workerOptionsKey(options.root, name);
-  const existing = readCloneWorkerMemo();
-  if (existing) {
-    if (existing.key !== key) {
-      throw new Error(
-        `cloneWorkerDatabase already started with different root/name ` +
-          `(first: ${JSON.stringify(existing.key)}, now: ${JSON.stringify(key)})`,
-      );
-    }
-    return existing.promise;
-  }
-  const promise = (async () => {
-    await cloneFromTemplateIfNeeded({
-      root: options.root,
-      mode: "test",
-      name,
-      setEnv: true,
-    });
-  })().catch((err) => {
-    writeCloneWorkerMemo(undefined);
-    throw err;
+export async function cloneWorkerDatabase(options: CloneWorkerDatabaseOptions = {}): Promise<void> {
+  const name =
+    options.name ?? process.env.JEST_WORKER_ID ?? process.env.VITEST_POOL_ID ?? String(process.pid);
+  await cloneFromTemplateIfNeeded({
+    root: options.root,
+    mode: "test",
+    name,
+    reuse: true,
+    setEnv: true,
   });
-  writeCloneWorkerMemo({ promise, key });
-  return promise;
 }

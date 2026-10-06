@@ -93,17 +93,17 @@ Keep logic in the canonical layer. Prefer reuse over one-off branches in adapter
 
 ## Env and policy (easy to get wrong)
 
-| Mechanism                                          | Meaning                                                                                                   |
-| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `CEDAR_PG=0`                                       | Opt-out auto-acquire in adapters                                                                          |
-| External `TEST_DATABASE_URL` / `DATABASE_URL`      | Escape hatch → skip acquire (unless managed `cpg_*` / placeholders)                                       |
-| `CEDAR_PG_FORCE=1` / `{ force: true }` / `--force` | Ignore external-URL escape hatch                                                                          |
-| `loadTestEnv` / `loadDevEnv`                       | Fill **undefined** keys by default; `{ overwrite: true }` or `@cedarjs/pg/dev-env` to beat ambient `.env` |
-| `cedarpg run`                                      | Always force-sets child `DATABASE_URL` (Nx `dependsOn` does **not** forward env)                          |
+| Mechanism                                          | Meaning                                                                                                     |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `CEDAR_PG=0`                                       | Opt-out auto-acquire in adapters                                                                            |
+| External `TEST_DATABASE_URL` / `DATABASE_URL`      | Escape hatch → skip acquire (unless managed `cpg_*` / placeholders)                                         |
+| `CEDAR_PG_FORCE=1` / `{ force: true }` / `--force` | Ignore external-URL escape hatch                                                                            |
+| `loadTestEnv` / `loadDevEnv`                       | Fill **undefined** keys by default; `{ overwrite: true }` or `@cedarjs/pg/dev-env` to beat ambient `.env`   |
+| `cedarpg run` / `run --attach`                     | Always force-sets child `DATABASE_URL` (Nx `dependsOn` does **not** forward env); `--attach` never acquires |
 
 These are different knobs. Do not collapse `force`, `overwrite`, and `run` into one boolean flag scattered across call sites.
 
-Nx canonical consumer shape: one `db:ready` / `createAcquireTask`, then wrap children with `cedarpg run --mode=… --force -- <cmd>`. Never recommend concurrent `acquire`/`run` on the same worktree (DDL races).
+Nx canonical consumer shape: one `db:ready` / `createAcquireTask` (the only DDL), then wrap children with attach-only `cedarpg run --attach --mode=… -- <cmd>` (`cedarPgAttachCommand`). `attach` (`src/core/lifecycle.ts`) reads the lease + one TCP probe: never acquire, DDL, or host revive. Never recommend concurrent `acquire`/plain `run` on the same worktree (DDL races); concurrent `run --attach` is fine.
 
 ## Testing expectations
 
@@ -111,6 +111,7 @@ Nx canonical consumer shape: one `db:ready` / `createAcquireTask`, then wrap chi
 - **Postgres-backed** confidence is `vp run smoke:pg` (and CI). Prefer extending that harness over inventing ad-hoc live-DB tests in unit suites.
 - Prefer testing pure policy/naming/lease parsers with fixtures; mock process/env at the boundary.
 - When changing dispose/TEMPLATE/clone semantics, update `tests/lifecycle-dispose.test.ts`, `tests/template-*.test.ts`, and README troubleshooting if symptoms change.
+- Clone reuse is DB-backed (`reuse: true` → `42P04` + owner check in `cloneDatabaseFromTemplate`), never an in-memory memo: Jest resets `globalThis` per test file. TEMPLATE setup acquires `fresh` (role-scoped drop before migrate). `smoke:pg` covers both with two Jest files in one worker after a seeded crashed run.
 
 ## Packaging checklist
 

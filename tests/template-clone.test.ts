@@ -132,6 +132,7 @@ test("markTemplate + cloneFromTemplate use admin and lease role password", async
           templateName,
           databaseName: worker.databaseName,
           roleName: lease.roleName,
+          reuse: false,
         });
 
         await worker.dropClone();
@@ -347,7 +348,103 @@ test("markTemplate + cloneFromTemplate rediscover adminUrl when omitted", async 
           templateName,
           databaseName: worker.databaseName,
           roleName: `${templateName}_role`,
+          reuse: false,
         });
+      },
+    );
+  } finally {
+    if (prev === undefined) delete process.env.CEDAR_PG_REGISTRY_DIR;
+    else process.env.CEDAR_PG_REGISTRY_DIR = prev;
+    rmSync(registry, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cloneFromTemplate(IfNeeded) forwards reuse and reports a reused clone", async () => {
+  const registry = mkdtempSync(join(tmpdir(), "cedarpg-reg-"));
+  const root = mkdtempSync(join(tmpdir(), "cedarpg-wt-"));
+  const prev = process.env.CEDAR_PG_REGISTRY_DIR;
+  const prevCedar = process.env.CEDAR_PG;
+  const prevUrl = process.env.TEST_DATABASE_URL;
+  process.env.CEDAR_PG_REGISTRY_DIR = registry;
+  delete process.env.CEDAR_PG;
+  delete process.env.TEST_DATABASE_URL;
+
+  const adminUrl = "postgresql://postgres:postgres@127.0.0.1:5433/postgres";
+  const templateName = "cpg_cedar_main_test_reuse001";
+  const lease = makeLease({ root, databaseName: templateName });
+  writeLease(lease);
+  const cloneDb = vi.fn(async () => "reused" as const);
+
+  try {
+    await withHostAndAutopgMocks(adminUrl, { cloneDatabaseFromTemplate: cloneDb }, async () => {
+      const { cloneFromTemplateIfNeeded } = await import("../src/core/template.ts");
+      const result = await cloneFromTemplateIfNeeded({
+        root,
+        mode: "test",
+        adminUrl,
+        name: "1",
+        reuse: true,
+        setEnv: false,
+      });
+      if (result.status !== "cloned") throw new Error("expected cloned");
+      expect(result.reused).toBe(true);
+      expect(result.databaseName).toBe(`${templateName}_c_1`);
+      expect(cloneDb).toHaveBeenCalledWith({
+        adminUrl,
+        templateName,
+        databaseName: `${templateName}_c_1`,
+        roleName: lease.roleName,
+        reuse: true,
+      });
+    });
+  } finally {
+    if (prev === undefined) delete process.env.CEDAR_PG_REGISTRY_DIR;
+    else process.env.CEDAR_PG_REGISTRY_DIR = prev;
+    if (prevCedar === undefined) delete process.env.CEDAR_PG;
+    else process.env.CEDAR_PG = prevCedar;
+    if (prevUrl === undefined) delete process.env.TEST_DATABASE_URL;
+    else process.env.TEST_DATABASE_URL = prevUrl;
+    rmSync(registry, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("acquire({ fresh }) drops the role's leftovers before CREATE; default does not", async () => {
+  const registry = mkdtempSync(join(tmpdir(), "cedarpg-reg-"));
+  const root = mkdtempSync(join(tmpdir(), "cedarpg-wt-"));
+  const prev = process.env.CEDAR_PG_REGISTRY_DIR;
+  process.env.CEDAR_PG_REGISTRY_DIR = registry;
+
+  const adminUrl = "postgresql://postgres:postgres@127.0.0.1:5433/postgres";
+  const calls: string[] = [];
+  const dropOwned = vi.fn(async () => {
+    calls.push("drop");
+    return [];
+  });
+  const ensureDb = vi.fn(async () => {
+    calls.push("ensure");
+  });
+
+  try {
+    await withHostAndAutopgMocks(
+      adminUrl,
+      { dropDatabasesOwnedByRole: dropOwned, ensureDatabase: ensureDb },
+      async () => {
+        const { acquire } = await import("../src/core/lifecycle.ts");
+        await acquire({ root, mode: "test", setEnv: false });
+        expect(dropOwned).not.toHaveBeenCalled();
+
+        // No lease file needed: scope comes from the derived role name.
+        rmSync(join(root, ".cedarpg"), { recursive: true, force: true });
+        const result = await acquire({ root, mode: "test", setEnv: false, fresh: true });
+        expect(dropOwned).toHaveBeenCalledWith({
+          adminUrl,
+          roleName: result.roleName,
+          preferLast: result.databaseName,
+        });
+        expect(calls).toEqual(["ensure", "drop", "ensure"]);
+        expect(readLease(root, "test")?.databaseName).toBe(result.databaseName);
       },
     );
   } finally {

@@ -1,5 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import {
+  cedarPgAttachCommand,
   cedarPgNxTargets,
   cedarPgRunCommand,
   CEDAR_PG_NX_ACQUIRE_DEV,
@@ -28,6 +29,15 @@ test("cedarPgRunCommand wraps child with cedarpg run", () => {
   );
   expect(cedarPgRunCommand("test", "vitest run", "cedarpg")).toBe(
     "cedarpg run --mode=test -- vitest run",
+  );
+});
+
+test("cedarPgAttachCommand wraps child with attach-only cedarpg run", () => {
+  expect(cedarPgAttachCommand("dev", "node dist/server.js")).toBe(
+    "cedarpg run --attach --mode=dev -- node dist/server.js",
+  );
+  expect(cedarPgAttachCommand("test", "playwright test", "./bin/cedarpg")).toBe(
+    "./bin/cedarpg run --attach --mode=test -- playwright test",
   );
 });
 

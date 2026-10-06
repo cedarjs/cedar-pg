@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Added
+
+- CLI: `cedarpg run --attach --mode=dev|test -- <cmd…>`, attach-only run. It reads the existing lease and sets child `DATABASE_URL` (+ `TEST_DATABASE_URL` in test). It never acquires, never runs role/database DDL, and never starts the host. It fails before the child starts when there is no lease or nothing listens on the leased port. Nx: `cedarPgAttachCommand(mode, cmd)` builds the string.
+- `acquire({ fresh: true })` / `acquireIfNeeded({ fresh: true })` drop every database owned by this worktree's role for that mode first. That covers the leased DB, TEMPLATE clones, and leftovers from crashed runs, and it works even when the lease file is gone. The database is then created again empty.
+- `cloneFromTemplate({ reuse: true })` keeps an existing `<template>_c_<name>` owned by the lease role instead of failing with `database already exists`. `CloneResult.reused` reports which happened. A clone name owned by any other role still fails, with the owner in the message.
+
+### Changed
+
+- Nx canonical shape: one `db:ready` acquires + migrates, and children use `cedarpg run --attach` (was `cedarpg run --force` per child). Children no longer run DDL, so concurrent `api:dev` + workers no longer race. Plain `cedarpg run` is unchanged for one-shot acquire + exec.
+- TEMPLATE setup (`setupTemplateMode`, Jest / Vitest `createGlobalSetup`) acquires with `fresh: true`. Leftover TEMPLATE / clone databases from a crashed run are dropped before `migrate`, so migrate always starts empty and consumers need no pre-cleanup.
+
+### Fixed
+
+- TEMPLATE `cloneWorkerDatabase` reuses the worker's `<template>_c_<workerId>` in Postgres across Jest test files. The `0.2.0-beta.0` fix cached the clone on `globalThis`, but Jest resets `globalThis` and the module registry for each test file. So the second file in a worker still ran `CREATE DATABASE` and failed with `database already exists`. The in-memory memo is removed; the database is the source of truth. As a result, calling it again with a different `root` / `name` in one process no longer throws: each call clones or reuses its own name. `smoke:pg` now runs two Jest files in one worker, after a seeded crashed run.
+
 ## 0.2.0-beta.1
 
 Revive a registered autopg host without pm2.

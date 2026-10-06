@@ -274,17 +274,35 @@ export async function setDatabaseIsTemplate(opts: {
   });
 }
 
+/** Postgres `duplicate_database`: CREATE DATABASE hit an existing datname. */
+const DUPLICATE_DATABASE = "42P04";
+
+export type CloneOutcome = "created" | "reused";
+
+async function ownerOf(client: pg.Client, databaseName: string): Promise<string | undefined> {
+  const result = await client.query<{ owner: string }>(
+    `SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = $1`,
+    [databaseName],
+  );
+  return result.rows[0]?.owner;
+}
+
 /**
  * CREATE DATABASE … TEMPLATE … OWNER via admin connection.
  * Test roles are LOGIN-only; workers cannot CREATE DATABASE themselves.
+ *
+ * With `reuse`, an existing `databaseName` owned by `roleName` is kept as-is
+ * (`"reused"`) — a worker clone made earlier in this run by another test file.
+ * An existing datname owned by any other role always fails: it is not ours.
  */
 export async function cloneDatabaseFromTemplate(opts: {
   adminUrl: string;
   templateName: string;
   databaseName: string;
   roleName: string;
-}): Promise<void> {
-  await withAdminClient(opts.adminUrl, async (client) => {
+  reuse?: boolean;
+}): Promise<CloneOutcome> {
+  return withAdminClient(opts.adminUrl, async (client): Promise<CloneOutcome> => {
     const tmpl = await client.query<{ datistemplate: boolean }>(
       `SELECT datistemplate FROM pg_database WHERE datname = $1`,
       [opts.templateName],
@@ -296,14 +314,21 @@ export async function cloneDatabaseFromTemplate(opts: {
       throw new Error(`database is not a TEMPLATE; run markTemplate first: ${opts.templateName}`);
     }
 
-    const exists = await client.query("SELECT 1 FROM pg_database WHERE datname = $1", [
-      opts.databaseName,
-    ]);
-    if (exists.rowCount && exists.rowCount > 0) {
-      throw new Error(`database already exists: ${opts.databaseName}`);
+    try {
+      await client.query(
+        `CREATE DATABASE ${quoteIdent(opts.databaseName)} WITH TEMPLATE ${quoteIdent(opts.templateName)} OWNER ${quoteIdent(opts.roleName)}`,
+      );
+      return "created";
+    } catch (err) {
+      if ((err as { code?: unknown }).code !== DUPLICATE_DATABASE) throw err;
     }
-    await client.query(
-      `CREATE DATABASE ${quoteIdent(opts.databaseName)} WITH TEMPLATE ${quoteIdent(opts.templateName)} OWNER ${quoteIdent(opts.roleName)}`,
+    const owner = await ownerOf(client, opts.databaseName);
+    if (opts.reuse && owner === opts.roleName) return "reused";
+    throw new Error(
+      owner === opts.roleName
+        ? `database already exists: ${opts.databaseName}`
+        : `database already exists: ${opts.databaseName} (owned by ${owner ?? "unknown"}, ` +
+            `not ${opts.roleName}); drop it or pick another clone name`,
     );
   });
 }

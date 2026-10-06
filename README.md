@@ -70,6 +70,7 @@ cedarpg acquire --mode=dev
 cedarpg acquire --mode=test --print-env
 cedarpg run --mode=dev -- yarn tsx scripts/apiServer/dev.ts
 cedarpg run --mode=test -- vitest run
+cedarpg run --attach --mode=dev -- node dist/server.js   # existing lease only, no DDL
 cedarpg dispose --mode=test
 cedarpg print-url --mode=dev
 cedarpg status --mode=dev
@@ -79,9 +80,11 @@ cedarpg gc                         # drop DBs whose worktree root is gone
 
 `status` and `studio` are read-only. They do not acquire. `studio` walks from cwd up to the worktree.
 
-`cedarpg run` acquires or attaches the lease, then execs the command. The child always gets `DATABASE_URL` from the lease. In test mode it also gets `TEST_DATABASE_URL`. `--force` only sets `CEDAR_PG_FORCE=1`, so nested adapters do not treat an ambient URL as an escape hatch.
+`cedarpg run` acquires (idempotent role and database DDL), then execs the command. The child always gets `DATABASE_URL` from the lease. In test mode it also gets `TEST_DATABASE_URL`. `--force` only sets `CEDAR_PG_FORCE=1`, so nested adapters do not treat an ambient URL as an escape hatch.
 
-If two targets run `cedarpg acquire` or `cedarpg run` on the same worktree, role and database DDL can race. Use one acquire, then `run` wrappers.
+`cedarpg run --attach` skips the acquire. It reads the lease a prior `acquire` / `run` wrote, sets the same child env, and execs. It never runs DDL and never starts or revives the host. It fails (nonzero, before the child starts) when there is no lease or nothing is listening on the leased port.
+
+If two targets run `cedarpg acquire` or plain `cedarpg run` on the same worktree, role and database DDL can race. Acquire once, then wrap children with `run --attach`. Any number of those can run concurrently.
 
 ## Vite+
 
@@ -125,19 +128,27 @@ Shortcuts bind on Vite 8 and vite-plus. Vite 7 and Cedar print the listen panel 
 
 Nx `dependsOn` does not forward env from an acquire task into dependents. Vite+ `env: [...]` does. Canonical shape:
 
-1. One `db:ready` (or `createAcquireTask`) that acquires and migrates.
-2. Wrap API, dev, and e2e children with `cedarpg run --mode=dev --force -- <cmd>`.
+1. One `db:ready` that acquires and migrates: `createAcquireTask` (below), or `cedarpg run --mode=dev --force -- <migrate cmd>`. This is the only target that runs DDL.
+2. Wrap API, dev, worker, and e2e children with attach-only `cedarpg run --attach --mode=dev -- <cmd>`. They read the lease `db:ready` wrote and never acquire, so `api:dev` and workers can start concurrently without racing role/DB DDL.
 
-Pointing Nx `envFile` at `.cedarpg/<mode>.env` after acquire still loses to an ambient `.env` unless you also force or overwrite.
+Instead of wrapping a child, it can call `loadDevEnv({ overwrite: true })` or `import "@cedarjs/pg/dev-env"`. Pointing Nx `envFile` at `.cedarpg/<mode>.env` still loses to an ambient `.env` unless you overwrite.
 
 ```ts
-import { cedarPgNxTargets, cedarPgRunCommand, relativeEnvFile } from "@cedarjs/pg/nx";
+import {
+  cedarPgAttachCommand,
+  cedarPgNxTargets,
+  cedarPgRunCommand,
+  relativeEnvFile,
+} from "@cedarjs/pg/nx";
 
 cedarPgNxTargets();
 // { "db:acquire": { command: "cedarpg acquire --mode=dev", cache: false }, ... }
 
-cedarPgRunCommand("dev", "yarn tsx scripts/apiServer/dev.ts");
-// "cedarpg run --mode=dev -- yarn tsx scripts/apiServer/dev.ts"
+cedarPgRunCommand("dev", "prisma migrate deploy");
+// "cedarpg run --mode=dev -- prisma migrate deploy"   (db:ready: acquire + exec)
+
+cedarPgAttachCommand("dev", "yarn tsx scripts/apiServer/dev.ts");
+// "cedarpg run --attach --mode=dev -- yarn tsx scripts/apiServer/dev.ts"   (children)
 
 relativeEnvFile("dev"); // ".cedarpg/dev.env"
 ```
@@ -148,17 +159,21 @@ relativeEnvFile("dev"); // ".cedarpg/dev.env"
     "db:ready": { "command": "tsx tools/db-ready.ts", "cache": false },
     "dev": {
       "dependsOn": ["db:ready"],
-      "command": "cedarpg run --mode=dev --force -- yarn tsx scripts/apiServer/dev.ts"
+      "command": "cedarpg run --attach --mode=dev -- yarn tsx scripts/apiServer/dev.ts"
+    },
+    "workers": {
+      "dependsOn": ["db:ready"],
+      "command": "cedarpg run --attach --mode=dev -- yarn tsx scripts/workers.ts"
     },
     "serve": {
       "dependsOn": ["db:ready"],
-      "command": "cedarpg run --mode=dev --force -- node dist/server.js"
+      "command": "cedarpg run --attach --mode=dev -- node dist/server.js"
     }
   }
 }
 ```
 
-Migrate hook (same compose shape as Jest `createGlobalSetup`):
+Migrate hook for `db:ready` (same compose shape as Jest `createGlobalSetup`):
 
 ```ts
 // tools/db-ready.ts
@@ -174,7 +189,7 @@ await createAcquireTask({
 })();
 ```
 
-If you cannot wrap with `run`, use `loadDevEnv({ overwrite: true })` or `import "@cedarjs/pg/dev-env"`. Absolute path helper: `envFilePath(root, mode)`.
+Absolute path helper: `envFilePath(root, mode)`.
 
 ## Vitest and Jest
 
@@ -234,6 +249,10 @@ Migrate stays app-owned via `createGlobalSetup({ migrate })`. The adapter then m
 
 Point `globalSetup` at a local module that calls `createGlobalSetup`. String-resolving the package entry without a migrate hook throws.
 
+Each setup starts clean. Before migrate, `createGlobalSetup` drops every database owned by this worktree's test role: a TEMPLATE and worker clones left behind by a crashed or killed run, even if its lease file is gone. `migrate` therefore always runs against an empty database, and you do not need your own pre-cleanup. Only this worktree's `cpg_*_test_*` role is touched, never other databases on the shared host. Core API: `acquire({ mode: "test", fresh: true })`.
+
+`cloneWorkerDatabase()` gives each worker one clone, `<template>_c_<JEST_WORKER_ID | VITEST_POOL_ID | pid>`, shared by every test file that worker runs. The first file creates it. Later files find it in Postgres and reuse it. Nothing is cached in memory, so this holds under Jest's per-file `globalThis` and module registry. Files in the same worker share data in that clone, as they would with any per-worker database. If the clone name exists but belongs to a different role, the call fails with a clear error rather than reusing it.
+
 ### Jest
 
 ```js
@@ -253,7 +272,7 @@ process.env.CEDAR_PG_FORCE = "1";
 module.exports = {
   globalSetup: "<rootDir>/jest.cedar-global.cjs",
   globalTeardown: require.resolve("@cedarjs/pg/jest-teardown"),
-  // Prefer setupFilesAfterEnv so you can use beforeAll (Jest globals).
+  // Runs once per test file; every file in a worker reuses that worker's clone.
   setupFilesAfterEnv: ["<rootDir>/jest.cedar-worker.cjs"],
 };
 
@@ -261,8 +280,6 @@ module.exports = {
 const { cloneWorkerDatabase } = require("@cedarjs/pg/jest/template");
 beforeAll(() => cloneWorkerDatabase());
 ```
-
-`cloneWorkerDatabase` memos on `globalThis`, so Jest `setupFiles` (module reload per file) still shares one clone per worker.
 
 ### Vitest
 
@@ -310,7 +327,9 @@ await dispose({ root: acquired.root, mode: "test" }); // TEMPLATE + all clones +
 
 `acquire` returns `adminUrl` for migrate hooks and privileged DDL. `markTemplate` and `cloneFromTemplate` accept it, or rediscover the host when it is omitted. `cloneFromTemplate` uses the admin connection (`CREATE DATABASE ... TEMPLATE`). Test roles stay `LOGIN`-only.
 
-`setEnv` defaults to false on `cloneFromTemplate`. It defaults to true on `cloneFromTemplateIfNeeded` (same as `acquireIfNeeded`). Worker adapters call `cloneFromTemplateIfNeeded` via `cloneWorkerDatabase`.
+`setEnv` defaults to false on `cloneFromTemplate`. It defaults to true on `cloneFromTemplateIfNeeded` (same as `acquireIfNeeded`). Worker adapters call `cloneFromTemplateIfNeeded` via `cloneWorkerDatabase`, with `reuse: true`.
+
+An explicit `name` that already exists fails with `database already exists` unless you pass `reuse: true`. Then a clone owned by the lease role is kept as is, and the result has `reused: true`.
 
 `dispose` is role-scoped suite teardown, not `dropClone`. It unsets `IS_TEMPLATE` and drops every database owned by the lease role.
 
@@ -423,9 +442,10 @@ vp run smoke:pg    # pack, then Vitest and Jest adapters against real ephemeral 
 | Symptom                                                                                 | Fix                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ECONNREFUSED 127.0.0.1:25432` on `cedarpg acquire`                                     | autopg is registered but not listening. cedar-pg attaches only after TCP accepts. It runs `autopg restart`, then detached `autopg postmaster` on the registered port/data if still dark — including when pm2 is missing and `restart` exits 0 ("respawned daemon"). A revived postmaster logs to `~/.autopg/logs/cedarpg-postmaster.log`. `status=stopped` with `runtime.live=true` is healthy once TCP accepts; cedar-pg will not `install` pm2. If revive fails, the error lists what was tried. |
-| `database already exists: ..._c_<workerId>` in Jest                                     | Use current `@cedarjs/pg` (`cloneWorkerDatabase` memos on `globalThis`). Prefer `setupFilesAfterEnv` + `beforeAll`. Avoid passing bare `JEST_WORKER_ID` as an explicit `name`.                                                                                                                                                                                                                                                                                                                     |
+| `database already exists: ..._c_<workerId>` in Jest                                     | Upgrade `@cedarjs/pg`. Older releases cached the clone on `globalThis`, which Jest resets for every test file. `cloneWorkerDatabase` now reuses the worker's clone from Postgres (`reuse: true`), and template setup drops crashed-run leftovers first. If the error says `owned by <other role>`, a database outside this worktree's lease has that name: drop it or pass another `name`.                                                                                                         |
 | Acquire skipped. Tests hit shared or stale Postgres                                     | A real `.env` `TEST_DATABASE_URL` (or a `url` the caller passed) trips the escape hatch. Set `CEDAR_PG_FORCE=1` once in `jest.config.js`, or `force: true`, or `cedarpg run --force`.                                                                                                                                                                                                                                                                                                              |
 | `Disk quota exceeded` / `No space left on device` / Postgres `53100` on ephemeral start | Enlarge `/dev/shm` (`sudo mount -o remount,size=6G /dev/shm`). On isolated runners only: `rm -rf /dev/shm/cedar-pg-* /dev/shm/pgserve-* /dev/shm/PostgreSQL.*`. Cold-start also prunes these when the recipe port is dead.                                                                                                                                                                                                                                                                         |
 | `autopg: command not found` in CI with Yarn `YARN_ENABLE_SCRIPTS=false`                 | `CEDAR_PG_INSTALL_AUTOPG=1` is not enough when lifecycle scripts are off. With `nodeLinker: node-modules`, run `bash node_modules/@cedarjs/pg/scripts/ci-install-autopg.sh` and put `~/.local/bin` on `PATH` (or use `setup-autopg`). PnP: resolve the script path via Yarn, or prefer the Action.                                                                                                                                                                                                 |
-| Nx child still uses `.env` `DATABASE_URL`                                               | `dependsOn` does not forward acquire env. Wrap with `cedarpg run --mode=dev --force -- <cmd>`, or `loadDevEnv({ overwrite: true })`.                                                                                                                                                                                                                                                                                                                                                               |
-| Role or DB errors under parallel Nx targets                                             | Do not run concurrent `acquire` or `run` on the same worktree. One `db:ready`, then `run` wrappers.                                                                                                                                                                                                                                                                                                                                                                                                |
+| Nx child still uses `.env` `DATABASE_URL`                                               | `dependsOn` does not forward acquire env. Wrap with `cedarpg run --attach --mode=dev -- <cmd>`, or `loadDevEnv({ overwrite: true })`.                                                                                                                                                                                                                                                                                                                                                              |
+| Role or DB errors under parallel Nx targets                                             | Children are running plain `cedarpg run` (or `acquire`), so each one runs DDL. Keep the acquire in one `db:ready`, and switch the children to `cedarpg run --attach`.                                                                                                                                                                                                                                                                                                                              |
+| `no dev lease ...; attach never acquires` from `cedarpg run --attach`                   | Nothing has acquired this worktree yet. Make the target `dependsOn` your `db:ready` (or run `cedarpg acquire --mode=dev`). On `nothing is listening`, re-run `db:ready` / `acquire` to bring the host back; attach never starts it.                                                                                                                                                                                                                                                                |

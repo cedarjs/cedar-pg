@@ -46,6 +46,12 @@ export function cedarPgLifecycleTargets(
   return targets;
 }
 
+/** One-shot acquire + exec (`cedarpg run`). Use for the single `db:ready`-style target. */
 export function cedarPgRunCommand(mode: DbMode, command: string, bin = CLI_NAME): string {
   return `${bin} run --mode=${mode} -- ${command}`;
+}
+
+/** Attach-only exec (`cedarpg run --attach`): lease env, no DDL. Use for children of `db:ready`. */
+export function cedarPgAttachCommand(mode: DbMode, command: string, bin = CLI_NAME): string {
+  return `${bin} run --attach --mode=${mode} -- ${command}`;
 }

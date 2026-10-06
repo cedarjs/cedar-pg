@@ -33,6 +33,7 @@ function clonedWorker(
     roleName: "cpg_tmpl_role",
     templateName: "cpg_tmpl",
     port: 5433,
+    reused: false,
     dropClone: async () => {},
     ...overrides,
   };
@@ -47,8 +48,6 @@ async function withMockedCore<T>(
   },
   run: () => Promise<T>,
 ): Promise<T> {
-  const cloneWorkerMemo = Symbol.for("@cedarjs/pg/cloneWorkerDatabase");
-  delete (globalThis as typeof globalThis & { [cloneWorkerMemo]?: unknown })[cloneWorkerMemo];
   vi.resetModules();
   vi.doMock("../src/core/lifecycle.ts", async () => {
     const actual = await vi.importActual<typeof import("../src/core/lifecycle.ts")>(
@@ -76,11 +75,10 @@ async function withMockedCore<T>(
     vi.doUnmock("../src/core/lifecycle.ts");
     vi.doUnmock("../src/core/template.ts");
     vi.resetModules();
-    delete (globalThis as typeof globalThis & { [cloneWorkerMemo]?: unknown })[cloneWorkerMemo];
   }
 }
 
-test("setupTemplateMode acquires, migrates, then markTemplate", async () => {
+test("setupTemplateMode fresh-acquires, migrates, then markTemplate", async () => {
   const acquireIfNeeded = vi.fn(async () => acquiredLease());
   const markTemplate = vi.fn(async () => ({
     databaseName: "cpg_tmpl",
@@ -92,6 +90,13 @@ test("setupTemplateMode acquires, migrates, then markTemplate", async () => {
     const { setupTemplateMode } = await import("../src/adapters/template-mode.ts");
     const result = await setupTemplateMode({ migrate, setEnv: false });
     expect(result.status).toBe("acquired");
+    // fresh: leftovers from a crashed run are dropped before migrate
+    expect(acquireIfNeeded).toHaveBeenCalledWith({
+      root: undefined,
+      mode: "test",
+      fresh: true,
+      setEnv: false,
+    });
     expect(process.env.CEDAR_PG_ADMIN_URL).toBeUndefined();
     expect(migrate).toHaveBeenCalledWith({
       databaseUrl: "postgresql://role:pw@127.0.0.1:5433/cpg_tmpl",
@@ -174,110 +179,73 @@ test("setupTemplateMode skips migrate/mark when acquire is skipped", async () =>
   });
 });
 
-test("cloneWorkerDatabase clones via cloneFromTemplateIfNeeded with setEnv true", async () => {
+async function withWorkerEnv(workerId: string, run: () => Promise<void>): Promise<void> {
   const prevJest = process.env.JEST_WORKER_ID;
   const prevCedar = process.env.CEDAR_PG;
-  process.env.JEST_WORKER_ID = "3";
+  process.env.JEST_WORKER_ID = workerId;
   delete process.env.CEDAR_PG;
+  try {
+    await run();
+  } finally {
+    if (prevJest === undefined) delete process.env.JEST_WORKER_ID;
+    else process.env.JEST_WORKER_ID = prevJest;
+    if (prevCedar === undefined) delete process.env.CEDAR_PG;
+    else process.env.CEDAR_PG = prevCedar;
+  }
+}
 
+test("cloneWorkerDatabase clones the worker id with reuse + setEnv", async () => {
   const cloneFromTemplateIfNeeded = vi.fn(async () => clonedWorker());
 
-  try {
-    await withMockedCore({ cloneFromTemplateIfNeeded }, async () => {
+  await withWorkerEnv("3", () =>
+    withMockedCore({ cloneFromTemplateIfNeeded }, async () => {
       const { cloneWorkerDatabase } = await import("../src/adapters/template-mode.ts");
       await cloneWorkerDatabase({ root: "/tmp/wt" });
       expect(cloneFromTemplateIfNeeded).toHaveBeenCalledWith({
         root: "/tmp/wt",
         mode: "test",
         name: "3",
+        reuse: true,
         setEnv: true,
       });
-    });
-  } finally {
-    if (prevJest === undefined) delete process.env.JEST_WORKER_ID;
-    else process.env.JEST_WORKER_ID = prevJest;
-    if (prevCedar === undefined) delete process.env.CEDAR_PG;
-    else process.env.CEDAR_PG = prevCedar;
-  }
+    }),
+  );
 });
 
-test("cloneWorkerDatabase memo survives module reload (Jest setupFiles)", async () => {
-  const prevJest = process.env.JEST_WORKER_ID;
-  const prevCedar = process.env.CEDAR_PG;
-  process.env.JEST_WORKER_ID = "1";
-  delete process.env.CEDAR_PG;
+test("cloneWorkerDatabase reaches the DB with reuse from every test file", async () => {
+  // Jest gives each file a fresh globalThis + module registry, so nothing
+  // in-process can dedupe: each file must ask to reuse <tmpl>_c_<workerId>.
+  const cloneFromTemplateIfNeeded = vi
+    .fn()
+    .mockResolvedValueOnce(clonedWorker({ databaseName: "cpg_tmpl_c_1", reused: false }))
+    .mockResolvedValueOnce(clonedWorker({ databaseName: "cpg_tmpl_c_1", reused: true }));
 
-  const cloneFromTemplateIfNeeded = vi.fn(async () =>
-    clonedWorker({ databaseName: "cpg_tmpl_c_1" }),
-  );
-
-  try {
-    await withMockedCore({ cloneFromTemplateIfNeeded }, async () => {
+  await withWorkerEnv("1", () =>
+    withMockedCore({ cloneFromTemplateIfNeeded }, async () => {
       const first = await import("../src/adapters/template-mode.ts");
       await first.cloneWorkerDatabase({ root: "/tmp/wt" });
       vi.resetModules();
       const second = await import("../src/adapters/template-mode.ts");
       await second.cloneWorkerDatabase({ root: "/tmp/wt" });
-      expect(cloneFromTemplateIfNeeded).toHaveBeenCalledTimes(1);
-    });
-  } finally {
-    if (prevJest === undefined) delete process.env.JEST_WORKER_ID;
-    else process.env.JEST_WORKER_ID = prevJest;
-    if (prevCedar === undefined) delete process.env.CEDAR_PG;
-    else process.env.CEDAR_PG = prevCedar;
-  }
+      expect(cloneFromTemplateIfNeeded).toHaveBeenCalledTimes(2);
+      for (const [options] of cloneFromTemplateIfNeeded.mock.calls) {
+        expect(options).toMatchObject({ name: "1", reuse: true });
+      }
+    }),
+  );
 });
 
-test("cloneWorkerDatabase is idempotent per process", async () => {
-  const prevJest = process.env.JEST_WORKER_ID;
-  const prevCedar = process.env.CEDAR_PG;
-  process.env.JEST_WORKER_ID = "1";
-  delete process.env.CEDAR_PG;
+test("cloneWorkerDatabase propagates clone failures", async () => {
+  const cloneFromTemplateIfNeeded = vi.fn(async () => {
+    throw new Error("database already exists: cpg_tmpl_c_1 (owned by someone_else, not x)");
+  });
 
-  const cloneFromTemplateIfNeeded = vi.fn(async () =>
-    clonedWorker({ databaseName: "cpg_tmpl_c_1" }),
-  );
-
-  try {
-    await withMockedCore({ cloneFromTemplateIfNeeded }, async () => {
+  await withWorkerEnv("1", () =>
+    withMockedCore({ cloneFromTemplateIfNeeded }, async () => {
       const { cloneWorkerDatabase } = await import("../src/adapters/template-mode.ts");
-      await cloneWorkerDatabase();
-      await cloneWorkerDatabase();
-      expect(cloneFromTemplateIfNeeded).toHaveBeenCalledTimes(1);
-    });
-  } finally {
-    if (prevJest === undefined) delete process.env.JEST_WORKER_ID;
-    else process.env.JEST_WORKER_ID = prevJest;
-    if (prevCedar === undefined) delete process.env.CEDAR_PG;
-    else process.env.CEDAR_PG = prevCedar;
-  }
-});
-
-test("cloneWorkerDatabase rejects conflicting root/name after first call", async () => {
-  const prevJest = process.env.JEST_WORKER_ID;
-  const prevCedar = process.env.CEDAR_PG;
-  process.env.JEST_WORKER_ID = "1";
-  delete process.env.CEDAR_PG;
-
-  const cloneFromTemplateIfNeeded = vi.fn(async () =>
-    clonedWorker({ databaseName: "cpg_tmpl_c_1" }),
+      await expect(cloneWorkerDatabase()).rejects.toThrow(/owned by someone_else/);
+    }),
   );
-
-  try {
-    await withMockedCore({ cloneFromTemplateIfNeeded }, async () => {
-      const { cloneWorkerDatabase } = await import("../src/adapters/template-mode.ts");
-      await cloneWorkerDatabase({ root: "/tmp/a" });
-      expect(() => cloneWorkerDatabase({ root: "/tmp/b" })).toThrow(
-        /already started with different root\/name/,
-      );
-      expect(cloneFromTemplateIfNeeded).toHaveBeenCalledTimes(1);
-    });
-  } finally {
-    if (prevJest === undefined) delete process.env.JEST_WORKER_ID;
-    else process.env.JEST_WORKER_ID = prevJest;
-    if (prevCedar === undefined) delete process.env.CEDAR_PG;
-    else process.env.CEDAR_PG = prevCedar;
-  }
 });
 
 test("vitest template teardown uses AcquireResult.dispose", async () => {

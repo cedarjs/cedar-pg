@@ -54,6 +54,12 @@ export type CloneFromTemplateOptions = {
    */
   name?: string;
   /**
+   * Keep an existing `<template>_c_<name>` owned by the lease role instead of
+   * failing with `database already exists` (default false). Worker adapters pass
+   * true so every test file in one worker attaches to the same clone.
+   */
+  reuse?: boolean;
+  /**
    * Inject DATABASE_URL / TEST_DATABASE_URL for this clone (default false).
    * Host `cloneFromTemplateIfNeeded` defaults true; worker adapters pass true explicitly.
    */
@@ -67,6 +73,8 @@ export type CloneResult = {
   roleName: string;
   templateName: string;
   port: number;
+  /** True when `reuse` attached to an existing clone instead of creating it. */
+  reused: boolean;
   /**
    * DROP this clone only (leaves TEMPLATE + role if still owned elsewhere).
    * Not suite teardown — use role-scoped `dispose` for that.
@@ -79,6 +87,7 @@ export type CloneResult = {
  * Reuses the template role so `databaseUrl` passwords stay valid (scheme v2).
  * Provider rejects when the leased DB is not marked TEMPLATE.
  * Port comes from the lease; admin URL is passed through or rediscovered.
+ * An existing clone datname fails unless `reuse` is set and the lease role owns it.
  */
 export async function cloneFromTemplate(options: CloneFromTemplateOptions): Promise<CloneResult> {
   const identity = resolveWorktreeIdentity(options.root);
@@ -92,11 +101,12 @@ export async function cloneFromTemplate(options: CloneFromTemplateOptions): Prom
   const suffix = options.name ?? `${process.pid}_${Date.now().toString(36)}`;
   const databaseName = buildCloneDatabaseName(lease.databaseName, suffix);
 
-  await cloneDatabaseFromTemplate({
+  const outcome = await cloneDatabaseFromTemplate({
     adminUrl,
     templateName: lease.databaseName,
     databaseName,
     roleName: lease.roleName,
+    reuse: options.reuse === true,
   });
 
   const databaseUrl = buildDatabaseUrl({
@@ -118,6 +128,7 @@ export async function cloneFromTemplate(options: CloneFromTemplateOptions): Prom
     roleName,
     templateName: lease.databaseName,
     port: lease.port,
+    reused: outcome === "reused",
     dropClone: async () => {
       await dropDatabase({ adminUrl, databaseName, roleName });
     },
