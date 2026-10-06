@@ -1,47 +1,20 @@
 import { expect, test } from "vite-plus/test";
-import {
-  cedarPgAttachCommand,
-  cedarPgNxTargets,
-  cedarPgRunCommand,
-  CEDAR_PG_NX_ACQUIRE_DEV,
-  CEDAR_PG_NX_ACQUIRE_TEST,
-  envFilePath,
-  nxTargetHints,
-  relativeEnvFile,
-} from "../src/adapters/nx.ts";
-import { STATE_DIRNAME } from "../src/core/constants.ts";
+import { cedarPgAttachCommand, cedarPgRunCommand } from "../src/adapters/nx.ts";
 
-test("cedarPgNxTargets exposes acquire/dispose commands", () => {
-  const targets = cedarPgNxTargets();
-  expect(targets[CEDAR_PG_NX_ACQUIRE_DEV]?.command).toContain("acquire --mode=dev");
-  expect(targets[CEDAR_PG_NX_ACQUIRE_TEST]?.command).toContain("acquire --mode=test");
-  expect(targets[CEDAR_PG_NX_ACQUIRE_DEV]?.cache).toBe(false);
-});
-
-test("nxTargetHints stays compatible with cedarPgNxTargets commands", () => {
-  const hints = nxTargetHints("./bin/cedarpg");
-  expect(hints["db:acquire"]?.command).toBe("./bin/cedarpg acquire --mode=dev");
-});
-
-test("cedarPgRunCommand wraps child with cedarpg run", () => {
-  expect(cedarPgRunCommand("dev", "yarn tsx scripts/dev.ts")).toBe(
-    "cedarpg run --mode=dev -- yarn tsx scripts/dev.ts",
+test("cedarPgRunCommand wraps the db:ready command with cedarpg run", () => {
+  expect(cedarPgRunCommand("dev", "prisma migrate deploy")).toBe(
+    "cedarpg run --mode=dev -- prisma migrate deploy",
   );
-  expect(cedarPgRunCommand("test", "vitest run", "cedarpg")).toBe(
-    "cedarpg run --mode=test -- vitest run",
+  expect(cedarPgRunCommand("test", "vitest run", "./bin/cedarpg")).toBe(
+    "./bin/cedarpg run --mode=test -- vitest run",
   );
 });
 
-test("cedarPgAttachCommand wraps child with attach-only cedarpg run", () => {
+test("cedarPgAttachCommand wraps a child with attach-only cedarpg run", () => {
   expect(cedarPgAttachCommand("dev", "node dist/server.js")).toBe(
     "cedarpg run --attach --mode=dev -- node dist/server.js",
   );
   expect(cedarPgAttachCommand("test", "playwright test", "./bin/cedarpg")).toBe(
     "./bin/cedarpg run --attach --mode=test -- playwright test",
   );
-});
-
-test("relativeEnvFile and envFilePath point at .cedarpg/<mode>.env", () => {
-  expect(relativeEnvFile("dev")).toBe(`${STATE_DIRNAME}/dev.env`);
-  expect(envFilePath("/tmp/worktree", "test")).toBe(`/tmp/worktree/${STATE_DIRNAME}/test.env`);
 });

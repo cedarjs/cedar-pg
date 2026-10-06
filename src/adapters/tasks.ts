@@ -1,7 +1,6 @@
-/** Shared CLI command strings and lifecycle target defs for Vite+ / Nx. */
+/** Vite+ lifecycle task names and command strings (also used by the status hint). */
 
 import { CLI_NAME } from "../core/constants.ts";
-import type { DbMode } from "../core/naming.ts";
 
 export const CEDAR_PG_TASK_ACQUIRE_DEV = "db:acquire";
 export const CEDAR_PG_TASK_ACQUIRE_TEST = "db:acquire-test";
@@ -44,14 +43,4 @@ export function cedarPgLifecycleTargets(
     targets[CEDAR_PG_TASK_DISPOSE_TEST] = { command: cmds.disposeTest, cache: false };
   }
   return targets;
-}
-
-/** One-shot acquire + exec (`cedarpg run`). Use for the single `db:ready`-style target. */
-export function cedarPgRunCommand(mode: DbMode, command: string, bin = CLI_NAME): string {
-  return `${bin} run --mode=${mode} -- ${command}`;
-}
-
-/** Attach-only exec (`cedarpg run --attach`): lease env, no DDL. Use for children of `db:ready`. */
-export function cedarPgAttachCommand(mode: DbMode, command: string, bin = CLI_NAME): string {
-  return `${bin} run --attach --mode=${mode} -- ${command}`;
 }

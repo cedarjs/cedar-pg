@@ -68,7 +68,7 @@ Worktree state lives in `.cedarpg`. Import `STATE_DIRNAME` instead of hardcoding
 ```bash
 cedarpg acquire --mode=dev
 cedarpg acquire --mode=test --print-env
-cedarpg run --mode=dev -- yarn tsx scripts/apiServer/dev.ts
+cedarpg run --mode=dev -- prisma migrate deploy
 cedarpg run --mode=test -- vitest run
 cedarpg run --attach --mode=dev -- node dist/server.js   # existing lease only, no DDL
 cedarpg dispose --mode=test
@@ -126,70 +126,93 @@ Shortcuts bind on Vite 8 and vite-plus. Vite 7 and Cedar print the listen panel 
 
 ## Nx
 
-Nx `dependsOn` does not forward env from an acquire task into dependents. Vite+ `env: [...]` does. Canonical shape:
+Nx `dependsOn` does not forward env from one target to the next, so the setup has two parts:
 
-1. One `db:ready` that acquires and migrates: `createAcquireTask` (below), or `cedarpg run --mode=dev --force -- <migrate cmd>`. This is the only target that runs DDL.
-2. Wrap API, dev, worker, and e2e children with attach-only `cedarpg run --attach --mode=dev -- <cmd>`. They read the lease `db:ready` wrote and never acquire, so `api:dev` and workers can start concurrently without racing role/DB DDL.
+1. **One `db:ready` target** acquires the worktree database and migrates it. It is the only target that runs role/database DDL.
+2. **Children** (`dev`, `serve`, workers, e2e) depend on `db:ready` and pick up the lease URL in one of two ways. They never acquire again: two acquires on the same worktree race DDL.
 
-Instead of wrapping a child, it can call `loadDevEnv({ overwrite: true })` or `import "@cedarjs/pg/dev-env"`. Pointing Nx `envFile` at `.cedarpg/<mode>.env` still loses to an ambient `.env` unless you overwrite.
-
-```ts
-import {
-  cedarPgAttachCommand,
-  cedarPgNxTargets,
-  cedarPgRunCommand,
-  relativeEnvFile,
-} from "@cedarjs/pg/nx";
-
-cedarPgNxTargets();
-// { "db:acquire": { command: "cedarpg acquire --mode=dev", cache: false }, ... }
-
-cedarPgRunCommand("dev", "prisma migrate deploy");
-// "cedarpg run --mode=dev -- prisma migrate deploy"   (db:ready: acquire + exec)
-
-cedarPgAttachCommand("dev", "yarn tsx scripts/apiServer/dev.ts");
-// "cedarpg run --attach --mode=dev -- yarn tsx scripts/apiServer/dev.ts"   (children)
-
-relativeEnvFile("dev"); // ".cedarpg/dev.env"
-```
-
-```json
+```jsonc
+// project.json (workspace root)
 {
   "targets": {
-    "db:ready": { "command": "tsx tools/db-ready.ts", "cache": false },
-    "dev": {
-      "dependsOn": ["db:ready"],
-      "command": "cedarpg run --attach --mode=dev -- yarn tsx scripts/apiServer/dev.ts"
+    "db:ready": {
+      "command": "cedarpg run --mode=dev -- prisma migrate deploy",
+      "cache": false,
     },
-    "workers": {
-      "dependsOn": ["db:ready"],
-      "command": "cedarpg run --attach --mode=dev -- yarn tsx scripts/workers.ts"
-    },
-    "serve": {
-      "dependsOn": ["db:ready"],
-      "command": "cedarpg run --attach --mode=dev -- node dist/server.js"
-    }
-  }
+    "db:status": { "command": "cedarpg status --mode=dev", "cache": false },
+    "db:url": { "command": "cedarpg print-url --mode=dev", "cache": false },
+    "db:studio": { "command": "cedarpg studio --mode=dev", "cache": false },
+  },
 }
 ```
 
-Migrate hook for `db:ready` (same compose shape as Jest `createGlobalSetup`):
+Swap in your migrate command (`drizzle-kit migrate`, …). Add `--force` (`cedarpg run --mode=dev --force -- …`) when a shell or `.env` `DATABASE_URL` would otherwise trip the [external-URL escape hatch](#environment-variables). For a migrate step written in TypeScript, call `createAcquireTask` from a script instead:
 
 ```ts
-// tools/db-ready.ts
+// tools/db-ready.ts → "command": "tsx tools/db-ready.ts"
 import { createAcquireTask } from "@cedarjs/pg";
 
 await createAcquireTask({
   mode: "dev",
-  // Need this when .env already has DATABASE_URL
   force: true,
   afterAcquire: async ({ databaseUrl }) => {
-    // prisma migrate deploy, drizzle push, ...
+    // run your migrations against databaseUrl
   },
 })();
 ```
 
-Absolute path helper: `envFilePath(root, mode)`.
+`db:status`, `db:url`, and `db:studio` are optional local helpers. They read the lease and never acquire. `studio` opens Prisma Studio or Drizzle Kit Studio, whichever it finds.
+
+### Children: preload or attach
+
+Pick one per target. Both give the child the `DATABASE_URL` that `db:ready` leased, overriding a `DATABASE_URL` from `.env`.
+
+```jsonc
+{
+  "targets": {
+    // Preload: Node loads .cedarpg/dev.env with overwrite before your code runs.
+    "serve": {
+      "dependsOn": ["db:ready"],
+      "command": "node --require @cedarjs/pg/dev-env dist/server.js",
+    },
+    "dev": {
+      "dependsOn": ["db:ready"],
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsx watch src/server.ts",
+        "env": { "NODE_OPTIONS": "--require @cedarjs/pg/dev-env" },
+      },
+    },
+    // Attach: cedarpg sets the env, then execs any command (Node or not).
+    "worker": {
+      "dependsOn": ["db:ready"],
+      "command": "cedarpg run --attach --mode=dev -- node dist/worker.js",
+    },
+  },
+}
+```
+
+- **Preload** (`@cedarjs/pg/dev-env`, or `loadDevEnv({ overwrite: true })` at the top of your entry) costs nothing extra but only works for Node processes. With no lease it is a no-op, and the process keeps its ambient URL.
+- **Attach** (`cedarpg run --attach --mode=dev -- <cmd>`) works for any command. It reads the lease and checks the port, and fails before the child starts when either is missing. It never runs DDL and never starts the host, so any number of attached children can start at once.
+
+Avoid Nx `envFile: ".cedarpg/dev.env"`. An ambient `.env` `DATABASE_URL` wins over it.
+
+`@cedarjs/pg/nx` exports two optional string builders for these commands. Use them when you generate targets from code:
+
+```ts
+import { cedarPgAttachCommand, cedarPgRunCommand } from "@cedarjs/pg/nx";
+
+cedarPgRunCommand("dev", "prisma migrate deploy"); // "cedarpg run --mode=dev -- prisma migrate deploy"
+cedarPgAttachCommand("dev", "node dist/worker.js"); // "cedarpg run --attach --mode=dev -- node dist/worker.js"
+```
+
+### Tests
+
+Tests do not go through `db:ready`. The Jest TEMPLATE adapter acquires its own `test` lease, migrates once, clones per worker, and drops everything in teardown. Point Jest at it (see [TEMPLATE clones → Jest](#jest)) and make the Nx `test` target a plain runner command:
+
+```jsonc
+{ "targets": { "test": { "command": "jest --config jest.config.cjs" } } }
+```
 
 ## Vitest and Jest
 
@@ -446,6 +469,6 @@ vp run smoke:pg    # pack, then Vitest and Jest adapters against real ephemeral 
 | Acquire skipped. Tests hit shared or stale Postgres                                     | A real `.env` `TEST_DATABASE_URL` (or a `url` the caller passed) trips the escape hatch. Set `CEDAR_PG_FORCE=1` once in `jest.config.js`, or `force: true`, or `cedarpg run --force`.                                                                                                                                                                                                                                                                                                              |
 | `Disk quota exceeded` / `No space left on device` / Postgres `53100` on ephemeral start | Enlarge `/dev/shm` (`sudo mount -o remount,size=6G /dev/shm`). On isolated runners only: `rm -rf /dev/shm/cedar-pg-* /dev/shm/pgserve-* /dev/shm/PostgreSQL.*`. Cold-start also prunes these when the recipe port is dead.                                                                                                                                                                                                                                                                         |
 | `autopg: command not found` in CI with Yarn `YARN_ENABLE_SCRIPTS=false`                 | `CEDAR_PG_INSTALL_AUTOPG=1` is not enough when lifecycle scripts are off. With `nodeLinker: node-modules`, run `bash node_modules/@cedarjs/pg/scripts/ci-install-autopg.sh` and put `~/.local/bin` on `PATH` (or use `setup-autopg`). PnP: resolve the script path via Yarn, or prefer the Action.                                                                                                                                                                                                 |
-| Nx child still uses `.env` `DATABASE_URL`                                               | `dependsOn` does not forward acquire env. Wrap with `cedarpg run --attach --mode=dev -- <cmd>`, or `loadDevEnv({ overwrite: true })`.                                                                                                                                                                                                                                                                                                                                                              |
+| Nx child still uses `.env` `DATABASE_URL`                                               | `dependsOn` does not forward acquire env. Preload `@cedarjs/pg/dev-env` (`node --require` / `NODE_OPTIONS`), or wrap with `cedarpg run --attach --mode=dev -- <cmd>`. Not Nx `envFile`.                                                                                                                                                                                                                                                                                                            |
 | Role or DB errors under parallel Nx targets                                             | Children are running plain `cedarpg run` (or `acquire`), so each one runs DDL. Keep the acquire in one `db:ready`, and switch the children to `cedarpg run --attach`.                                                                                                                                                                                                                                                                                                                              |
 | `no dev lease ...; attach never acquires` from `cedarpg run --attach`                   | Nothing has acquired this worktree yet. Make the target `dependsOn` your `db:ready` (or run `cedarpg acquire --mode=dev`). On `nothing is listening`, re-run `db:ready` / `acquire` to bring the host back; attach never starts it.                                                                                                                                                                                                                                                                |

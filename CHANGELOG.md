@@ -4,14 +4,18 @@
 
 ### Added
 
-- CLI: `cedarpg run --attach --mode=dev|test -- <cmd…>`, attach-only run. It reads the existing lease and sets child `DATABASE_URL` (+ `TEST_DATABASE_URL` in test). It never acquires, never runs role/database DDL, and never starts the host. It fails before the child starts when there is no lease or nothing listens on the leased port. Nx: `cedarPgAttachCommand(mode, cmd)` builds the string.
+- CLI: `cedarpg run --attach --mode=dev|test -- <cmd…>`, attach-only run. It reads the existing lease and sets child `DATABASE_URL` (+ `TEST_DATABASE_URL` in test). It never acquires, never runs role/database DDL, and never starts the host. It fails before the child starts when there is no lease or nothing listens on the leased port. `@cedarjs/pg/nx` `cedarPgAttachCommand(mode, cmd)` builds the string.
 - `acquire({ fresh: true })` / `acquireIfNeeded({ fresh: true })` drop every database owned by this worktree's role for that mode first. That covers the leased DB, TEMPLATE clones, and leftovers from crashed runs, and it works even when the lease file is gone. The database is then created again empty.
 - `cloneFromTemplate({ reuse: true })` keeps an existing `<template>_c_<name>` owned by the lease role instead of failing with `database already exists`. `CloneResult.reused` reports which happened. A clone name owned by any other role still fails, with the owner in the message.
 
 ### Changed
 
-- Nx canonical shape: one `db:ready` acquires + migrates, and children use `cedarpg run --attach` (was `cedarpg run --force` per child). Children no longer run DDL, so concurrent `api:dev` + workers no longer race. Plain `cedarpg run` is unchanged for one-shot acquire + exec.
+- Nx canonical shape: one `db:ready` acquires + migrates. Children either preload `@cedarjs/pg/dev-env` or use `cedarpg run --attach` (was `cedarpg run --force` per child). Children no longer run DDL, so concurrent dev servers and workers no longer race. Plain `cedarpg run` is unchanged for one-shot acquire + exec. The README Nx section is rewritten as a generic setup guide.
 - TEMPLATE setup (`setupTemplateMode`, Jest / Vitest `createGlobalSetup`) acquires with `fresh: true`. Leftover TEMPLATE / clone databases from a crashed run are dropped before `migrate`, so migrate always starts empty and consumers need no pre-cleanup.
+
+### Removed
+
+- `@cedarjs/pg/nx` is trimmed to the two optional command builders, `cedarPgRunCommand` and `cedarPgAttachCommand`. Removed: `cedarPgNxTargets`, the deprecated `nxTargetHints`, `CEDAR_PG_NX_ACQUIRE_DEV` / `CEDAR_PG_NX_ACQUIRE_TEST` / `CEDAR_PG_NX_DISPOSE_TEST`, `relativeEnvFile`, the `NxTargetHint` / `CedarPgNxTargetsOptions` types, and the `envFilePath` re-export. Migration: Nx `db:acquire` / `db:acquire-test` / `db:dispose-test` targets were greenfield scaffolding; write one `db:ready` target instead (see README → Nx). Import `envFilePath` from `@cedarjs/pg`. Replace Nx `envFile: relativeEnvFile(mode)` with the `@cedarjs/pg/dev-env` preload or `cedarpg run --attach`, since an ambient `.env` beat `envFile`. Vite+ `cedarPgTasks()` is unchanged.
 
 ### Fixed
 

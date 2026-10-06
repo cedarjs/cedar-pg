@@ -82,7 +82,7 @@ Keep logic in the canonical layer. Prefer reuse over one-off branches in adapter
 | Lease read/write / registry                     | `src/core/lease.ts`                                                                |
 | Host attach / local recovery / ephemeral start  | `src/providers/host.ts` (internal; `ensureHostRunning` is **not** a public export) |
 | SQL / autopg CLI / URLs / role password         | `src/providers/autopg.ts`                                                          |
-| Shared Vite+/Nx task strings                    | `src/adapters/tasks.ts` (`cedarPgLifecycleTargets`, `cedarPgRunCommand`)           |
+| Vite+ lifecycle task strings                    | `src/adapters/tasks.ts` (`cedarPgLifecycleTargets`)                                |
 | Runner TEMPLATE orchestration + migrate hook    | `src/adapters/template-mode.ts` → thin Jest/Vitest wrappers                        |
 
 **Adapters should be thin.** They compose core + policy. Do not reimplement skip/env/host logic inside Jest/Vitest/Nx helpers. If both `acquireIfNeeded` and `cloneFromTemplateIfNeeded` need the same gate, extend `runIfNeeded` — do not copy conditionals.
@@ -103,7 +103,7 @@ Keep logic in the canonical layer. Prefer reuse over one-off branches in adapter
 
 These are different knobs. Do not collapse `force`, `overwrite`, and `run` into one boolean flag scattered across call sites.
 
-Nx canonical consumer shape: one `db:ready` / `createAcquireTask` (the only DDL), then wrap children with attach-only `cedarpg run --attach --mode=… -- <cmd>` (`cedarPgAttachCommand`). `attach` (`src/core/lifecycle.ts`) reads the lease + one TCP probe: never acquire, DDL, or host revive. Never recommend concurrent `acquire`/plain `run` on the same worktree (DDL races); concurrent `run --attach` is fine.
+Nx canonical consumer shape: one `db:ready` (`cedarpg run -- <migrate>` or `createAcquireTask`; the only DDL), then children either preload `@cedarjs/pg/dev-env` or wrap with attach-only `cedarpg run --attach --mode=… -- <cmd>`. `@cedarjs/pg/nx` is only two optional string builders (`cedarPgRunCommand`, `cedarPgAttachCommand`); do not grow it into target scaffolding or recommend Nx `envFile` (ambient `.env` wins). Nx docs stay generic: no consumer-app scripts or tool assumptions. `attach` (`src/core/lifecycle.ts`) reads the lease + one TCP probe: never acquire, DDL, or host revive. Never recommend concurrent `acquire`/plain `run` on the same worktree (DDL races); concurrent `run --attach` is fine.
 
 ## Testing expectations
 

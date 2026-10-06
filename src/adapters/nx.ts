@@ -1,64 +1,22 @@
 /**
- * Nx targets. `dependsOn` does not forward acquire env (unlike Vite+ `env: [...]`).
- * Canonical shape: one `db:ready` acquires + migrates (`createAcquireTask`, or
- * `cedarpg run --mode=dev --force -- <migrate>`), then children wrap with
- * attach-only `cedarpg run --attach --mode=dev -- <cmd>` (`cedarPgAttachCommand`).
- * Attach never runs DDL, so concurrent children (api:dev + workers) are safe; only
- * `db:ready` acquires. Alternative for children: `loadDevEnv({ overwrite: true })`
- * / `@cedarjs/pg/dev-env`. `envFile` → `.cedarpg/<mode>.env` still loses to an
- * ambient `.env` without overwrite.
+ * Optional command-string builders for Nx `project.json` targets. You can write
+ * the same strings by hand.
  *
- * ```json
- * {
- *   "targets": {
- *     "db:ready": { "command": "tsx tools/db-ready.ts", "cache": false },
- *     "dev": {
- *       "dependsOn": ["db:ready"],
- *       "command": "cedarpg run --attach --mode=dev -- yarn tsx scripts/apiServer/dev.ts"
- *     }
- *   }
- * }
- * ```
+ * Nx `dependsOn` does not forward env from one target to another. So one
+ * `db:ready` target acquires + migrates (`cedarPgRunCommand`, the only DDL), and
+ * children either preload `@cedarjs/pg/dev-env` or wrap with attach-only
+ * `cedarpg run --attach` (`cedarPgAttachCommand`). Never acquire in a child.
  */
 
-import { CLI_NAME, STATE_DIRNAME } from "../core/constants.ts";
-import { envFilePath } from "../core/lease.ts";
+import { CLI_NAME } from "../core/constants.ts";
 import type { DbMode } from "../core/naming.ts";
-import {
-  cedarPgAttachCommand,
-  cedarPgLifecycleTargets,
-  cedarPgRunCommand,
-  type CedarPgLifecycleTarget,
-  type CedarPgLifecycleTargetsOptions,
-  CEDAR_PG_TASK_DISPOSE_TEST,
-  CEDAR_PG_TASK_ACQUIRE_DEV,
-  CEDAR_PG_TASK_ACQUIRE_TEST,
-} from "./tasks.ts";
 
-export {
-  CEDAR_PG_TASK_ACQUIRE_DEV as CEDAR_PG_NX_ACQUIRE_DEV,
-  CEDAR_PG_TASK_ACQUIRE_TEST as CEDAR_PG_NX_ACQUIRE_TEST,
-  CEDAR_PG_TASK_DISPOSE_TEST as CEDAR_PG_NX_DISPOSE_TEST,
-  cedarPgLifecycleTargets as cedarPgNxTargets,
-  cedarPgAttachCommand,
-  cedarPgRunCommand,
-  envFilePath,
-};
-
-/** Relative path for Nx `envFile` / dotenv. */
-export function relativeEnvFile(mode: DbMode): string {
-  return `${STATE_DIRNAME}/${mode}.env`;
+/** Acquire + exec (`cedarpg run`). Use only for the single `db:ready` target. */
+export function cedarPgRunCommand(mode: DbMode, command: string, bin = CLI_NAME): string {
+  return `${bin} run --mode=${mode} -- ${command}`;
 }
 
-export type NxTargetHint = CedarPgLifecycleTarget;
-export type CedarPgNxTargetsOptions = CedarPgLifecycleTargetsOptions;
-
-/** @deprecated Prefer `cedarPgNxTargets()`. */
-export function nxTargetHints(bin = CLI_NAME): Record<string, { command: string }> {
-  return Object.fromEntries(
-    Object.entries(cedarPgLifecycleTargets({ bin })).map(([name, def]) => [
-      name,
-      { command: def.command },
-    ]),
-  );
+/** Attach-only exec (`cedarpg run --attach`): lease env, no DDL. Use for children of `db:ready`. */
+export function cedarPgAttachCommand(mode: DbMode, command: string, bin = CLI_NAME): string {
+  return `${bin} run --attach --mode=${mode} -- ${command}`;
 }
