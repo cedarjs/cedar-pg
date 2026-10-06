@@ -9,7 +9,6 @@ export default defineConfig({
       index: "src/index.ts",
       cli: "src/cli.ts",
       "vite-plus": "src/adapters/vite-plus.ts",
-      nx: "src/adapters/nx.ts",
       vitest: "src/adapters/vitest.ts",
       "vitest-template": "src/adapters/vitest-template.ts",
       jest: "src/adapters/jest.ts",

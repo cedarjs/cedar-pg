@@ -47,7 +47,7 @@ tests/          # unit tests (mock / no Postgres unless testing SQL helpers care
 scripts/        # postinstall, CI binary install, smoke harnesses
 ```
 
-Pack entries and npm `exports` are declared in `vite.config.ts` `pack.entry` and `package.json` `exports`. Plan paths stay flat (`./vite-plus`, `./nx`, …) — do not expose `./adapters/…` in the public map. When adding a public entry:
+Pack entries and npm `exports` are declared in `vite.config.ts` `pack.entry` and `package.json` `exports`. Plan paths stay flat (`./vite-plus`, `./jest`, …) — do not expose `./adapters/…` in the public map. When adding a public entry:
 
 1. Add `src/…` module
 2. Register `pack.entry` in `vite.config.ts`
@@ -103,7 +103,7 @@ Keep logic in the canonical layer. Prefer reuse over one-off branches in adapter
 
 These are different knobs. Do not collapse `force`, `overwrite`, and `run` into one boolean flag scattered across call sites.
 
-Nx canonical consumer shape: one `db:ready` (`cedarpg run -- <migrate>` or `createAcquireTask`; the only DDL), then children either preload `@cedarjs/pg/dev-env` or wrap with attach-only `cedarpg run --attach --mode=… -- <cmd>`. `@cedarjs/pg/nx` is only two optional string builders (`cedarPgRunCommand`, `cedarPgAttachCommand`); do not grow it into target scaffolding or recommend Nx `envFile` (ambient `.env` wins). Nx docs stay generic: no consumer-app scripts or tool assumptions. `attach` (`src/core/lifecycle.ts`) reads the lease + one TCP probe: never acquire, DDL, or host revive. Never recommend concurrent `acquire`/plain `run` on the same worktree (DDL races); concurrent `run --attach` is fine.
+Nx canonical consumer shape: one `db:ready` (`cedarpg run -- <migrate>` or `createAcquireTask`; the only DDL), then children either preload `@cedarjs/pg/dev-env` or wrap with attach-only `cedarpg run --attach --mode=… -- <cmd>`. There is no `@cedarjs/pg/nx` entry: Nx targets are plain `cedarpg` command strings in docs. Do not reintroduce target scaffolding or string-builder helpers, and do not recommend Nx `envFile` (ambient `.env` wins). Nx docs stay generic: no consumer-app scripts or tool assumptions. `attach` (`src/core/lifecycle.ts`) reads the lease + one TCP probe: never acquire, DDL, or host revive. Never recommend concurrent `acquire`/plain `run` on the same worktree (DDL races); concurrent `run --attach` is fine.
 
 ## Testing expectations
 

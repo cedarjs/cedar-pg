@@ -358,7 +358,7 @@ test("markTemplate + cloneFromTemplate rediscover adminUrl when omitted", async 
   }
 });
 
-test("cloneFromTemplate(IfNeeded) forwards reuse and reports a reused clone", async () => {
+test("cloneFromTemplate(IfNeeded) forwards reuse to the provider", async () => {
   const registry = mkdtempSync(join(tmpdir(), "cedarpg-reg-"));
   const root = mkdtempSync(join(tmpdir(), "cedarpg-wt-"));
   const prev = process.env.CEDAR_PG_REGISTRY_DIR;
@@ -372,7 +372,7 @@ test("cloneFromTemplate(IfNeeded) forwards reuse and reports a reused clone", as
   const templateName = "cpg_cedar_main_test_reuse001";
   const lease = makeLease({ root, databaseName: templateName });
   writeLease(lease);
-  const cloneDb = vi.fn(async () => "reused" as const);
+  const cloneDb = vi.fn(async () => {});
 
   try {
     await withHostAndAutopgMocks(adminUrl, { cloneDatabaseFromTemplate: cloneDb }, async () => {
@@ -386,7 +386,6 @@ test("cloneFromTemplate(IfNeeded) forwards reuse and reports a reused clone", as
         setEnv: false,
       });
       if (result.status !== "cloned") throw new Error("expected cloned");
-      expect(result.reused).toBe(true);
       expect(result.databaseName).toBe(`${templateName}_c_1`);
       expect(cloneDb).toHaveBeenCalledWith({
         adminUrl,

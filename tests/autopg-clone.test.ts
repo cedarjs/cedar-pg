@@ -66,9 +66,9 @@ function hostWithTemplate(): Map<string, FakeDb> {
 test("cloneDatabaseFromTemplate creates once, then reuse keeps the same clone", async () => {
   const databases = hostWithTemplate();
   await withFakePg(databases, async ({ cloneDatabaseFromTemplate }, statements) => {
-    await expect(cloneDatabaseFromTemplate({ ...base, reuse: true })).resolves.toBe("created");
+    await expect(cloneDatabaseFromTemplate({ ...base, reuse: true })).resolves.toBeUndefined();
     // Second test file in the same worker: CREATE hits 42P04, owner matches → reuse.
-    await expect(cloneDatabaseFromTemplate({ ...base, reuse: true })).resolves.toBe("reused");
+    await expect(cloneDatabaseFromTemplate({ ...base, reuse: true })).resolves.toBeUndefined();
     expect(statements.filter((s) => s.startsWith("CREATE DATABASE"))).toHaveLength(2);
     expect(databases.get("cpg_tmpl_c_1")).toEqual({ datistemplate: false, owner: ROLE });
   });

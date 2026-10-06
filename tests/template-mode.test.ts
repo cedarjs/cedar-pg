@@ -33,7 +33,6 @@ function clonedWorker(
     roleName: "cpg_tmpl_role",
     templateName: "cpg_tmpl",
     port: 5433,
-    reused: false,
     dropClone: async () => {},
     ...overrides,
   };
@@ -217,8 +216,8 @@ test("cloneWorkerDatabase reaches the DB with reuse from every test file", async
   // in-process can dedupe: each file must ask to reuse <tmpl>_c_<workerId>.
   const cloneFromTemplateIfNeeded = vi
     .fn()
-    .mockResolvedValueOnce(clonedWorker({ databaseName: "cpg_tmpl_c_1", reused: false }))
-    .mockResolvedValueOnce(clonedWorker({ databaseName: "cpg_tmpl_c_1", reused: true }));
+    .mockResolvedValueOnce(clonedWorker({ databaseName: "cpg_tmpl_c_1" }))
+    .mockResolvedValueOnce(clonedWorker({ databaseName: "cpg_tmpl_c_1" }));
 
   await withWorkerEnv("1", () =>
     withMockedCore({ cloneFromTemplateIfNeeded }, async () => {

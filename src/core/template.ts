@@ -73,8 +73,6 @@ export type CloneResult = {
   roleName: string;
   templateName: string;
   port: number;
-  /** True when `reuse` attached to an existing clone instead of creating it. */
-  reused: boolean;
   /**
    * DROP this clone only (leaves TEMPLATE + role if still owned elsewhere).
    * Not suite teardown — use role-scoped `dispose` for that.
@@ -101,7 +99,7 @@ export async function cloneFromTemplate(options: CloneFromTemplateOptions): Prom
   const suffix = options.name ?? `${process.pid}_${Date.now().toString(36)}`;
   const databaseName = buildCloneDatabaseName(lease.databaseName, suffix);
 
-  const outcome = await cloneDatabaseFromTemplate({
+  await cloneDatabaseFromTemplate({
     adminUrl,
     templateName: lease.databaseName,
     databaseName,
@@ -128,7 +126,6 @@ export async function cloneFromTemplate(options: CloneFromTemplateOptions): Prom
     roleName,
     templateName: lease.databaseName,
     port: lease.port,
-    reused: outcome === "reused",
     dropClone: async () => {
       await dropDatabase({ adminUrl, databaseName, roleName });
     },

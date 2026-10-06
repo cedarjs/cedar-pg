@@ -48,11 +48,6 @@
       "import": "./dist/vite-plus.mjs",
       "require": "./dist/vite-plus.cjs"
     },
-    "./nx": {
-      "types": "./dist/nx.d.mts",
-      "import": "./dist/nx.mjs",
-      "require": "./dist/nx.cjs"
-    },
     "./vitest": {
       "types": "./dist/vitest.d.mts",
       "import": "./dist/vitest.mjs",

@@ -197,15 +197,6 @@ Pick one per target. Both give the child the `DATABASE_URL` that `db:ready` leas
 
 Avoid Nx `envFile: ".cedarpg/dev.env"`. An ambient `.env` `DATABASE_URL` wins over it.
 
-`@cedarjs/pg/nx` exports two optional string builders for these commands. Use them when you generate targets from code:
-
-```ts
-import { cedarPgAttachCommand, cedarPgRunCommand } from "@cedarjs/pg/nx";
-
-cedarPgRunCommand("dev", "prisma migrate deploy"); // "cedarpg run --mode=dev -- prisma migrate deploy"
-cedarPgAttachCommand("dev", "node dist/worker.js"); // "cedarpg run --attach --mode=dev -- node dist/worker.js"
-```
-
 ### Tests
 
 Tests do not go through `db:ready`. The Jest TEMPLATE adapter acquires its own `test` lease, migrates once, clones per worker, and drops everything in teardown. Point Jest at it (see [TEMPLATE clones → Jest](#jest)) and make the Nx `test` target a plain runner command:
@@ -352,7 +343,7 @@ await dispose({ root: acquired.root, mode: "test" }); // TEMPLATE + all clones +
 
 `setEnv` defaults to false on `cloneFromTemplate`. It defaults to true on `cloneFromTemplateIfNeeded` (same as `acquireIfNeeded`). Worker adapters call `cloneFromTemplateIfNeeded` via `cloneWorkerDatabase`, with `reuse: true`.
 
-An explicit `name` that already exists fails with `database already exists` unless you pass `reuse: true`. Then a clone owned by the lease role is kept as is, and the result has `reused: true`.
+An explicit `name` that already exists fails with `database already exists` unless you pass `reuse: true`. Then a clone owned by the lease role is kept as is.
 
 `dispose` is role-scoped suite teardown, not `dropClone`. It unsets `IS_TEMPLATE` and drops every database owned by the lease role.
 

@@ -277,14 +277,12 @@ export async function setDatabaseIsTemplate(opts: {
 /** Postgres `duplicate_database`: CREATE DATABASE hit an existing datname. */
 const DUPLICATE_DATABASE = "42P04";
 
-export type CloneOutcome = "created" | "reused";
-
 /**
  * CREATE DATABASE … TEMPLATE … OWNER via admin connection.
  * Test roles are LOGIN-only; workers cannot CREATE DATABASE themselves.
  *
- * With `reuse`, an existing `databaseName` owned by `roleName` is kept as-is
- * (`"reused"`) — a worker clone made earlier in this run by another test file.
+ * With `reuse`, an existing `databaseName` owned by `roleName` is kept as-is:
+ * a worker clone made earlier in this run by another test file.
  * An existing datname owned by any other role always fails: it is not ours.
  */
 export async function cloneDatabaseFromTemplate(opts: {
@@ -293,8 +291,8 @@ export async function cloneDatabaseFromTemplate(opts: {
   databaseName: string;
   roleName: string;
   reuse?: boolean;
-}): Promise<CloneOutcome> {
-  return withAdminClient(opts.adminUrl, async (client): Promise<CloneOutcome> => {
+}): Promise<void> {
+  await withAdminClient(opts.adminUrl, async (client) => {
     const tmpl = await client.query<{ datistemplate: boolean }>(
       `SELECT datistemplate FROM pg_database WHERE datname = $1`,
       [opts.templateName],
@@ -310,7 +308,7 @@ export async function cloneDatabaseFromTemplate(opts: {
       await client.query(
         `CREATE DATABASE ${quoteIdent(opts.databaseName)} WITH TEMPLATE ${quoteIdent(opts.templateName)} OWNER ${quoteIdent(opts.roleName)}`,
       );
-      return "created";
+      return;
     } catch (err) {
       if ((err as { code?: unknown }).code !== DUPLICATE_DATABASE) throw err;
     }
@@ -319,7 +317,7 @@ export async function cloneDatabaseFromTemplate(opts: {
       [opts.databaseName],
     );
     const owner = existing.rows[0]?.owner;
-    if (opts.reuse && owner === opts.roleName) return "reused";
+    if (opts.reuse && owner === opts.roleName) return;
     throw new Error(
       `database already exists: ${opts.databaseName} (owned by ${owner ?? "unknown"})`,
     );

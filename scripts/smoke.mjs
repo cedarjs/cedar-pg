@@ -45,7 +45,6 @@ import {
   STATE_DIRNAME,
 } from '${PACKAGE_NAME}';
 import { cedarPgTasks } from '${PACKAGE_NAME}/vite-plus';
-import { cedarPgAttachCommand, cedarPgRunCommand } from '${PACKAGE_NAME}/nx';
 import vitestSetup from '${PACKAGE_NAME}/vitest';
 import jestSetup from '${PACKAGE_NAME}/jest';
 import jestTeardown from '${PACKAGE_NAME}/jest-teardown';
@@ -66,12 +65,6 @@ const name = buildDatabaseName(
 if (name !== 'cpg_cedar_feat_dev_abcd1234') throw new Error('bad name ' + name);
 const tasks = cedarPgTasks();
 if (!tasks['db:acquire']) throw new Error('missing db:acquire');
-if (!cedarPgRunCommand('dev', 'echo ok').includes('run --mode=dev')) {
-  throw new Error('cedarPgRunCommand missing run');
-}
-if (!cedarPgAttachCommand('dev', 'echo ok').includes('run --attach --mode=dev')) {
-  throw new Error('cedarPgAttachCommand missing run --attach');
-}
 if (typeof createAcquireTask !== 'function') throw new Error('missing createAcquireTask');
 if (typeof vitestSetup !== 'function') throw new Error('vitest setup export missing');
 if (typeof jestSetup !== 'function') throw new Error('jest setup export missing');
