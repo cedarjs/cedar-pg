@@ -7,7 +7,7 @@ module.exports = createGlobalSetup({
     const client = new Client({ connectionString: databaseUrl });
     await client.connect();
     try {
-      await client.query("CREATE TABLE smoke_marker (file text PRIMARY KEY)");
+      await client.query("CREATE TABLE smoke_marker (id serial PRIMARY KEY, file text NOT NULL)");
     } finally {
       await client.end();
     }

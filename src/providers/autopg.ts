@@ -324,6 +324,44 @@ export async function cloneDatabaseFromTemplate(opts: {
   });
 }
 
+/**
+ * Empty every user table in `databaseName` with one
+ * `TRUNCATE … RESTART IDENTITY`, so serial / identity columns start at 1 again.
+ *
+ * Runs as admin against that database. Skips system schemas, temp tables, and
+ * tables an extension owns (e.g. PostGIS `spatial_ref_sys`); partitions are covered by
+ * their parent. No `CASCADE`: every user table is in the one statement, so no
+ * FK target is missing from it.
+ */
+export async function truncateUserTables(opts: {
+  adminUrl: string;
+  databaseName: string;
+}): Promise<string[]> {
+  const url = new URL(opts.adminUrl);
+  url.pathname = `/${opts.databaseName}`;
+  return withAdminClient(url.toString(), async (client) => {
+    const result = await client.query<{ name: string }>(
+      `SELECT format('%I.%I', n.nspname, c.relname) AS name
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE c.relkind IN ('r', 'p')
+         AND NOT c.relispartition
+         AND c.relpersistence <> 't'
+         AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+         AND NOT EXISTS (
+           SELECT 1 FROM pg_depend d
+           WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e'
+         )
+       ORDER BY 1`,
+    );
+    const tables = result.rows.map((r) => r.name);
+    if (tables.length > 0) {
+      await client.query(`TRUNCATE TABLE ${tables.join(", ")} RESTART IDENTITY`);
+    }
+    return tables;
+  });
+}
+
 async function listOwnedDatnames(client: pg.Client, roleName: string): Promise<string[]> {
   const result = await client.query<{ datname: string }>(
     `SELECT datname FROM pg_database

@@ -6,6 +6,7 @@
 
 - CLI: `cedarpg run --attach --mode=dev|test -- <cmd…>`, attach-only run. It reads the existing lease and sets child `DATABASE_URL` (+ `TEST_DATABASE_URL` in test). It never acquires, never runs role/database DDL, and never starts the host. It fails before the child starts when there is no lease or nothing listens on the leased port.
 - `acquire({ fresh: true })` / `acquireIfNeeded({ fresh: true })` drop every database owned by this worktree's role for that mode first. That covers the leased DB, TEMPLATE clones, and leftovers from crashed runs, and it works even when the lease file is gone. The database is then created again empty.
+- `cloneWorkerDatabase({ reset })` (Jest / Vitest TEMPLATE) resets the worker clone at the start of every test file. The default `"truncate"` runs `TRUNCATE ... RESTART IDENTITY` over every user table, skipping system schemas, temp tables, and extension-owned tables. Rows from earlier files in the worker are gone, and `serial` / identity IDs restart at 1, so suites that expect `id = 1` work on a reused clone. This also clears rows that `migrate` seeded into the TEMPLATE. Pass `reset: "none"` to keep the clone's rows and reset on your own. A skipped clone (external URL, `CEDAR_PG=0`) is never truncated.
 - `cloneFromTemplate({ reuse: true })` keeps an existing `<template>_c_<name>` owned by the lease role instead of failing with `database already exists`. A clone name owned by any other role still fails, with the owner in the message.
 
 ### Changed

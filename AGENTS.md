@@ -111,7 +111,7 @@ Nx canonical consumer shape: one `db:ready` (`cedarpg run -- <migrate>` or `crea
 - **Postgres-backed** confidence is `vp run smoke:pg` (and CI). Prefer extending that harness over inventing ad-hoc live-DB tests in unit suites.
 - Prefer testing pure policy/naming/lease parsers with fixtures; mock process/env at the boundary.
 - When changing dispose/TEMPLATE/clone semantics, update `tests/lifecycle-dispose.test.ts`, `tests/template-*.test.ts`, and README troubleshooting if symptoms change.
-- Clone reuse is DB-backed (`reuse: true` → `42P04` + owner check in `cloneDatabaseFromTemplate`), never an in-memory memo: Jest resets `globalThis` per test file. TEMPLATE setup acquires `fresh` (role-scoped drop before migrate). `smoke:pg` covers both with two Jest files in one worker after a seeded crashed run.
+- Clone reuse is DB-backed (`reuse: true` → `42P04` + owner check in `cloneDatabaseFromTemplate`), never an in-memory memo: Jest resets `globalThis` per test file. TEMPLATE setup acquires `fresh` (role-scoped drop before migrate). `cloneWorkerDatabase` then resets the clone on every file with `TRUNCATE … RESTART IDENTITY` (`truncateUserTables` in `providers/autopg.ts`; `reset: "none"` opts out) — never on a skipped/external URL; `smoke:pg` asserts the second file sees `id = 1`. `smoke:pg` covers both with two Jest files in one worker after a seeded crashed run.
 
 ## Packaging checklist
 

@@ -29,7 +29,8 @@ export type {
  *   },
  * })
  *
- * // vitest.cedar-worker.ts — local ESM (pack emits CJS+ESM; top-level await lives here)
+ * // vitest.cedar-worker.ts — local ESM (pack emits CJS+ESM; top-level await lives here).
+ * // Runs per test file: reuses the worker clone, truncated with RESTART IDENTITY first.
  * import { cloneWorkerDatabase } from "@cedarjs/pg/vitest/template";
  * await cloneWorkerDatabase();
  * ```

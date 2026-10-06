@@ -265,7 +265,11 @@ Point `globalSetup` at a local module that calls `createGlobalSetup`. String-res
 
 Each setup starts clean. Before migrate, `createGlobalSetup` drops every database owned by this worktree's test role: a TEMPLATE and worker clones left behind by a crashed or killed run, even if its lease file is gone. `migrate` therefore always runs against an empty database, and you do not need your own pre-cleanup. Only this worktree's `cpg_*_test_*` role is touched, never other databases on the shared host. Core API: `acquire({ mode: "test", fresh: true })`.
 
-`cloneWorkerDatabase()` gives each worker one clone, `<template>_c_<JEST_WORKER_ID | VITEST_POOL_ID | pid>`, shared by every test file that worker runs. The first file creates it. Later files find it in Postgres and reuse it. Nothing is cached in memory, so this holds under Jest's per-file `globalThis` and module registry. Files in the same worker share data in that clone, as they would with any per-worker database. If the clone name exists but belongs to a different role, the call fails with a clear error rather than reusing it.
+`cloneWorkerDatabase()` gives each worker one clone, `<template>_c_<JEST_WORKER_ID | VITEST_POOL_ID | pid>`, shared by every test file that worker runs. The first file creates it. Later files find it in Postgres and reuse it. Nothing is cached in memory, so this holds under Jest's per-file `globalThis` and module registry. If the clone name exists but belongs to a different role, the call fails with a clear error rather than reusing it.
+
+Each file then starts from empty tables. By default `cloneWorkerDatabase()` runs one `TRUNCATE ... RESTART IDENTITY` over every user table in the clone, so rows from earlier files in the worker are gone and `serial` / identity IDs restart at 1. Tests that expect a first row with `id = 1` behave the same whichever file a worker runs first. It truncates on every call, the first file included, so rows that `migrate` seeded into the TEMPLATE (including bookkeeping tables such as `_prisma_migrations`) are cleared too. It skips system schemas, temp tables, and tables an extension owns (for example PostGIS `spatial_ref_sys`). If skip policy uses an external URL or `CEDAR_PG=0` is set, nothing is cloned and nothing is truncated.
+
+To keep the clone as the previous file left it and reset on your own, pass `cloneWorkerDatabase({ reset: "none" })`. Resets between tests inside one file stay app-owned.
 
 ### Jest
 
@@ -286,7 +290,8 @@ process.env.CEDAR_PG_FORCE = "1";
 module.exports = {
   globalSetup: "<rootDir>/jest.cedar-global.cjs",
   globalTeardown: require.resolve("@cedarjs/pg/jest-teardown"),
-  // Runs once per test file; every file in a worker reuses that worker's clone.
+  // Runs once per test file; every file in a worker reuses that worker's clone,
+  // truncated with RESTART IDENTITY first.
   setupFilesAfterEnv: ["<rootDir>/jest.cedar-worker.cjs"],
 };
 

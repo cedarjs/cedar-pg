@@ -39,7 +39,8 @@ const tmp = installConsumer({
 });
 
 cpSync(FIXTURES, tmp, { recursive: true });
-// Second TEMPLATE test file for the same worker: proves clone reuse across files.
+// Second TEMPLATE test file for the same worker: proves clone reuse across files
+// and the default TRUNCATE … RESTART IDENTITY reset between them.
 cpSync(join(tmp, "jest-template.test.cjs"), join(tmp, "jest-template-2.test.cjs"));
 
 // Binary-only install when missing — never postinstall / install.sh / pm2.
@@ -66,7 +67,9 @@ run("npx", ["jest", "--config", "jest.config.cjs", "--runInBand"], {
   env: smokeEnv,
 });
 
-console.log("==> jest TEMPLATE: crashed-run leftovers, then two files reuse one worker clone");
+console.log(
+  "==> jest TEMPLATE: crashed-run leftovers, then two files reuse + reset one worker clone",
+);
 run("node", ["seed-crashed-template.mjs"], { cwd: tmp, env: smokeEnv });
 run("npx", ["jest", "--config", "jest-template.config.cjs", "--runInBand"], {
   cwd: tmp,

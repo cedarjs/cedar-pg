@@ -1,5 +1,6 @@
 import { dispose, acquireIfNeeded, type AcquireIfNeededResult } from "../core/lifecycle.ts";
 import { cloneFromTemplateIfNeeded, markTemplate } from "../core/template.ts";
+import { truncateUserTables } from "../providers/autopg.ts";
 
 export type TemplateMigrateContext = {
   databaseUrl: string;
@@ -71,6 +72,13 @@ export type CloneWorkerDatabaseOptions = {
   root?: string;
   /** Clone suffix; defaults to JEST_WORKER_ID / VITEST_POOL_ID / pid. */
   name?: string;
+  /**
+   * How each file starts on the worker clone (default `"truncate"`):
+   * - `"truncate"`: `TRUNCATE … RESTART IDENTITY` on every user table, so rows
+   *   from earlier files are gone and serial / identity IDs restart at 1.
+   * - `"none"`: keep whatever the previous file left (app-owned reset).
+   */
+  reset?: "truncate" | "none";
 };
 
 /**
@@ -83,16 +91,25 @@ export type CloneWorkerDatabaseOptions = {
  * each file a fresh `globalThis` and module registry. Clones left over from a
  * crashed earlier run cannot leak in — `setupTemplateMode` drops them first.
  *
+ * Every file then starts from empty tables with identities restarted (`reset`),
+ * the first file included, so file order never changes what a file sees. That
+ * also clears rows `migrate` seeded into the TEMPLATE; pass `reset: "none"` to
+ * keep them and reset on your own. A skipped clone (external URL, `CEDAR_PG=0`)
+ * is never truncated.
+ *
  * Uses `cloneFromTemplateIfNeeded` (same skip policy as `acquireIfNeeded`) with `setEnv: true`.
  */
 export async function cloneWorkerDatabase(options: CloneWorkerDatabaseOptions = {}): Promise<void> {
   const name =
     options.name ?? process.env.JEST_WORKER_ID ?? process.env.VITEST_POOL_ID ?? String(process.pid);
-  await cloneFromTemplateIfNeeded({
+  const clone = await cloneFromTemplateIfNeeded({
     root: options.root,
     mode: "test",
     name,
     reuse: true,
     setEnv: true,
   });
+  if (clone.status === "cloned" && options.reset !== "none") {
+    await truncateUserTables({ adminUrl: clone.adminUrl, databaseName: clone.databaseName });
+  }
 }

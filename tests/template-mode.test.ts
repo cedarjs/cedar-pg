@@ -44,6 +44,7 @@ async function withMockedCore<T>(
     markTemplate?: ReturnType<typeof vi.fn>;
     cloneFromTemplateIfNeeded?: ReturnType<typeof vi.fn>;
     dispose?: ReturnType<typeof vi.fn>;
+    truncateUserTables?: ReturnType<typeof vi.fn>;
   },
   run: () => Promise<T>,
 ): Promise<T> {
@@ -68,11 +69,21 @@ async function withMockedCore<T>(
         mocks.cloneFromTemplateIfNeeded ?? actual.cloneFromTemplateIfNeeded,
     };
   });
+  vi.doMock("../src/providers/autopg.ts", async () => {
+    const actual = await vi.importActual<typeof import("../src/providers/autopg.ts")>(
+      "../src/providers/autopg.ts",
+    );
+    return {
+      ...actual,
+      truncateUserTables: mocks.truncateUserTables ?? vi.fn(async () => []),
+    };
+  });
   try {
     return await run();
   } finally {
     vi.doUnmock("../src/core/lifecycle.ts");
     vi.doUnmock("../src/core/template.ts");
+    vi.doUnmock("../src/providers/autopg.ts");
     vi.resetModules();
   }
 }
@@ -230,6 +241,56 @@ test("cloneWorkerDatabase reaches the DB with reuse from every test file", async
       for (const [options] of cloneFromTemplateIfNeeded.mock.calls) {
         expect(options).toMatchObject({ name: "1", reuse: true });
       }
+    }),
+  );
+});
+
+test("cloneWorkerDatabase truncates with identity restart on every file", async () => {
+  // Reused clone: rows and sequences from the previous file must not leak in.
+  const cloneFromTemplateIfNeeded = vi.fn(async () => clonedWorker());
+  const truncateUserTables = vi.fn(async () => ["public.users"]);
+
+  await withWorkerEnv("3", () =>
+    withMockedCore({ cloneFromTemplateIfNeeded, truncateUserTables }, async () => {
+      const { cloneWorkerDatabase } = await import("../src/adapters/template-mode.ts");
+      await cloneWorkerDatabase();
+      await cloneWorkerDatabase();
+      expect(truncateUserTables).toHaveBeenCalledTimes(2);
+      expect(truncateUserTables).toHaveBeenCalledWith({
+        adminUrl: "postgresql://postgres:postgres@127.0.0.1:5433/postgres",
+        databaseName: "cpg_tmpl_c_3",
+      });
+    }),
+  );
+});
+
+test("cloneWorkerDatabase reset none keeps the clone's rows", async () => {
+  const cloneFromTemplateIfNeeded = vi.fn(async () => clonedWorker());
+  const truncateUserTables = vi.fn(async () => []);
+
+  await withWorkerEnv("3", () =>
+    withMockedCore({ cloneFromTemplateIfNeeded, truncateUserTables }, async () => {
+      const { cloneWorkerDatabase } = await import("../src/adapters/template-mode.ts");
+      await cloneWorkerDatabase({ reset: "none" });
+      expect(cloneFromTemplateIfNeeded).toHaveBeenCalledTimes(1);
+      expect(truncateUserTables).not.toHaveBeenCalled();
+    }),
+  );
+});
+
+test("cloneWorkerDatabase never truncates a skipped (external) database", async () => {
+  const cloneFromTemplateIfNeeded = vi.fn(async () => ({
+    status: "skipped" as const,
+    reason: "external-url" as const,
+    databaseUrl: "postgresql://me@db.example.com/app_test",
+  }));
+  const truncateUserTables = vi.fn(async () => []);
+
+  await withWorkerEnv("3", () =>
+    withMockedCore({ cloneFromTemplateIfNeeded, truncateUserTables }, async () => {
+      const { cloneWorkerDatabase } = await import("../src/adapters/template-mode.ts");
+      await cloneWorkerDatabase();
+      expect(truncateUserTables).not.toHaveBeenCalled();
     }),
   );
 });

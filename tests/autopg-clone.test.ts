@@ -103,3 +103,62 @@ test("cloneDatabaseFromTemplate still requires a marked TEMPLATE", async () => {
     expect(statements.some((s) => s.startsWith("CREATE DATABASE"))).toBe(false);
   });
 });
+
+test("truncateUserTables restarts identity on every listed table, as admin on that DB", async () => {
+  const urls: string[] = [];
+  const statements: string[] = [];
+  class Client {
+    constructor(opts: { connectionString: string }) {
+      urls.push(opts.connectionString);
+    }
+    async connect(): Promise<void> {}
+    async end(): Promise<void> {}
+    async query(sql: string) {
+      statements.push(sql);
+      if (sql.includes("FROM pg_class")) {
+        return { rows: [{ name: "public.posts" }, { name: '"Other"."User"' }] };
+      }
+      return { rows: [] };
+    }
+  }
+  vi.resetModules();
+  vi.doMock("pg", () => ({ default: { Client } }));
+  try {
+    const { truncateUserTables } = await import("../src/providers/autopg.ts");
+    const tables = await truncateUserTables({
+      adminUrl: base.adminUrl,
+      databaseName: "cpg_tmpl_c_1",
+    });
+    expect(tables).toEqual(["public.posts", '"Other"."User"']);
+    expect(urls).toEqual(["postgresql://postgres:postgres@127.0.0.1:5433/cpg_tmpl_c_1"]);
+    expect(statements[0]).toMatch(/deptype = 'e'/);
+    expect(statements[1]).toBe('TRUNCATE TABLE public.posts, "Other"."User" RESTART IDENTITY');
+  } finally {
+    vi.doUnmock("pg");
+    vi.resetModules();
+  }
+});
+
+test("truncateUserTables issues no TRUNCATE when there are no user tables", async () => {
+  const statements: string[] = [];
+  class Client {
+    async connect(): Promise<void> {}
+    async end(): Promise<void> {}
+    async query(sql: string) {
+      statements.push(sql);
+      return { rows: [] };
+    }
+  }
+  vi.resetModules();
+  vi.doMock("pg", () => ({ default: { Client } }));
+  try {
+    const { truncateUserTables } = await import("../src/providers/autopg.ts");
+    await expect(
+      truncateUserTables({ adminUrl: base.adminUrl, databaseName: "cpg_tmpl_c_1" }),
+    ).resolves.toEqual([]);
+    expect(statements.some((s) => s.startsWith("TRUNCATE"))).toBe(false);
+  } finally {
+    vi.doUnmock("pg");
+    vi.resetModules();
+  }
+});

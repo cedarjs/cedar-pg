@@ -25,7 +25,8 @@ export type {
  * // process.env.CEDAR_PG_FORCE = "1";
  * globalSetup: "<rootDir>/jest.cedar-global.cjs",
  * globalTeardown: require.resolve("@cedarjs/pg/jest-teardown"),
- * // Runs per test file; every file in a worker reuses that worker's clone.
+ * // Runs per test file; every file in a worker reuses that worker's clone,
+ * // truncated with RESTART IDENTITY first (`cloneWorkerDatabase({ reset: "none" })` opts out).
  * setupFilesAfterEnv: ["<rootDir>/jest.cedar-worker.cjs"],
  *
  * // jest.cedar-worker.cjs
