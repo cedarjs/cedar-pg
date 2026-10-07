@@ -31,9 +31,14 @@ case "$(uname -s)-$(uname -m)" in
     ;;
 esac
 
-if [ -x "${HOME}/.local/bin/autopg" ]; then
-  echo "[ci-install-autopg] already present: ${HOME}/.local/bin/autopg"
+# Reuse only the pinned version; a stale binary (cached runner, older image) is replaced.
+EXISTING="$("${HOME}/.local/bin/autopg" --version 2>/dev/null || true)"
+if [ "${EXISTING}" = "autopg ${VERSION#v}" ]; then
+  echo "[ci-install-autopg] already present: ${HOME}/.local/bin/autopg (${EXISTING})"
   exit 0
+fi
+if [ -n "${EXISTING}" ]; then
+  echo "[ci-install-autopg] replacing ${EXISTING} with ${VERSION}"
 fi
 
 TARBALL="autopg-${VERSION#v}-${PLATFORM}.tar.gz"

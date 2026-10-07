@@ -11,7 +11,7 @@ branding:
 inputs:
   version:
     description: >
-      autopg release tag (e.g. v3.0.7). When unset, reads scripts/autopg-version
+      autopg release tag (e.g. v3.2.2). When unset, reads scripts/autopg-version
       from this action's repository (the cedar-pg pin).
     required: false
     default: ""

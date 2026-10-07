@@ -1,28 +1,35 @@
+import { readFileSync } from "node:fs";
 import { expect, test } from "vite-plus/test";
 import {
   adminUrlFor,
   buildDatabaseUrl,
+  AUTOPG_PINNED_VERSION,
   connectWhileStartingUp,
+  outdatedAutopgWarning,
+  parseAutopgVersion,
   parseHostStatus,
   rolePasswordFor,
   ROLE_PASSWORD_SCHEME,
 } from "../src/providers/autopg.ts";
 
 test("parseHostStatus requires numeric port", () => {
-  expect(parseHostStatus('{"port":5433,"status":"online"}')).toEqual({ port: 5433 });
-  expect(() => parseHostStatus('{"status":"online"}')).toThrow(/missing numeric port/);
+  expect(parseHostStatus('{"port":5433,"status":"ready","ready":true}')).toEqual({ port: 5433 });
+  expect(() => parseHostStatus('{"status":"ready"}')).toThrow(/missing numeric port/);
   expect(() => parseHostStatus("not-json")).toThrow(/invalid JSON/);
 });
 
 test("parseHostStatus reports the registered port without judging liveness", () => {
-  // Real `autopg status --json` for an installed-but-stopped pm2 host: the port
-  // is registration, not a listener. TCP is the only liveness gate (host.ts).
-  // Bare postmaster: status=stopped / pid=null while runtime.live=true — still
+  // Real autopg v3.2 `status --json` for an installed-but-stopped pm2 host: the
+  // port is registration, not a listener. TCP is the only liveness gate (host.ts).
+  // Bare postmaster: status=stopped / ready=false while runtime.live=true — still
   // not an attach/reinstall signal.
   const stopped = `{
     "installed": true,
     "name": "autopg-server",
     "status": "stopped",
+    "ready": false,
+    "supervisorStatus": "stopped",
+    "persisted": true,
     "pid": null,
     "port": 25432,
     "dataDir": "/home/user/.autopg/data",
@@ -148,4 +155,28 @@ test("connectWhileStartingUp throws other errors at once and 57P03 after the gra
     ),
   ).rejects.toBe(startingUp);
   expect(attempts).toBe(5);
+});
+
+test("AUTOPG_PINNED_VERSION is inlined from scripts/autopg-version", () => {
+  expect(AUTOPG_PINNED_VERSION).toBe(readFileSync("scripts/autopg-version", "utf8").trim());
+});
+
+test("parseAutopgVersion reads `autopg --version` output and release tags", () => {
+  expect(parseAutopgVersion("autopg 3.0.7\n")).toEqual([3, 0, 7]);
+  expect(parseAutopgVersion("v3.2.2")).toEqual([3, 2, 2]);
+  expect(parseAutopgVersion("autopg dev")).toBeNull();
+});
+
+test("outdatedAutopgWarning warns only when the host is older than the pin", () => {
+  const warning = outdatedAutopgWarning("autopg 3.0.7", "v3.2.2");
+  expect(warning).toContain("autopg 3.0.7 is older than v3.2.2");
+  expect(warning).toContain("autopg/v3.2.2/install.sh | AUTOPG_VERSION=v3.2.2 bash");
+  expect(warning).toContain("autopg update");
+  // Minor / patch ordering is numeric, not lexical.
+  expect(outdatedAutopgWarning("autopg 3.2.10", "v3.2.9")).toBeNull();
+  expect(outdatedAutopgWarning("autopg 3.10.0", "v3.9.0")).toBeNull();
+  expect(outdatedAutopgWarning("autopg 3.2.2", "v3.2.2")).toBeNull();
+  expect(outdatedAutopgWarning("autopg 4.0.0", "v3.2.2")).toBeNull();
+  // Unreadable output (binary failed to run) never nags.
+  expect(outdatedAutopgWarning("", "v3.2.2")).toBeNull();
 });

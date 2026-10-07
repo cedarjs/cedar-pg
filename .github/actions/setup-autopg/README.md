@@ -22,7 +22,7 @@ Optional inputs:
 
 | Input     | Default                           | Meaning                              |
 | --------- | --------------------------------- | ------------------------------------ |
-| `version` | cedar-pg `scripts/autopg-version` | Override release tag (e.g. `v3.0.7`) |
+| `version` | cedar-pg `scripts/autopg-version` | Override release tag (e.g. `v3.2.2`) |
 | `cache`   | `true`                            | Cache install tree under `~/.local`  |
 | `token`   | `github.token`                    | Token for `gh attestation verify`    |
 

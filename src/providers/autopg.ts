@@ -25,6 +25,11 @@ type HostStatusPaths = {
   logsDir?: string;
 };
 
+declare const __CEDAR_PG_AUTOPG_PIN__: string;
+
+/** autopg release cedar-pg is tested against (`scripts/autopg-version`, inlined at build). */
+export const AUTOPG_PINNED_VERSION: string = __CEDAR_PG_AUTOPG_PIN__;
+
 export const INSTALL_HINT =
   "autopg is required. Install with:\n" +
   "  curl -fsSL https://raw.githubusercontent.com/automagik-dev/autopg/main/install.sh | bash\n" +
@@ -70,9 +75,10 @@ function optionalNonEmptyString(value: unknown): string | undefined {
  * dirs when present). Throws only when the output is not autopg status JSON.
  *
  * Registration is not liveness: autopg reports a port for a stopped host too,
- * and its `status` string is supervisor-specific (pm2 `online`, systemd-user /
- * launchd differ). `runtime.live` is also not the attach gate — a bare
- * postmaster can be query-ready while status stays `stopped` / `pid: null`.
+ * and its `status` / `ready` describe the supervisor (autopg ≥ v3.2: `ready` needs
+ * pm2 `online`; pm2's raw state is `supervisorStatus`). Neither, nor `runtime.live`,
+ * is the attach gate — a bare postmaster (e.g. one cedar-pg revived) is
+ * query-ready while status stays `stopped` / `ready: false`.
  * Liveness is a TCP accept on the port, proven by the caller (`acquire`).
  */
 export function parseHostStatus(json: string): HostStatusPaths & { port: number } {
@@ -109,6 +115,43 @@ export function adminUrlFor(port: number, env: NodeJS.ProcessEnv = process.env):
     env.AUTOPG_PG_PASSWORD || env.PGSERVE_PG_PASSWORD || "postgres",
   );
   return `postgresql://${user}:${password}@127.0.0.1:${port}/postgres`;
+}
+
+/** `[major, minor, patch]` from `autopg --version` output or a `vX.Y.Z` tag; `null` if absent. */
+export function parseAutopgVersion(text: string): [number, number, number] | null {
+  const m = /(\d+)\.(\d+)\.(\d+)/.exec(text);
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+/**
+ * Upgrade warning when `autopg --version` output is older than `pin`. `null` when
+ * current, newer, or unreadable — never nag on what cannot be parsed. Upgrading
+ * is the user's call: it restarts the host every worktree shares.
+ */
+export function outdatedAutopgWarning(
+  versionOutput: string,
+  pin = AUTOPG_PINNED_VERSION,
+): string | null {
+  const have = parseAutopgVersion(versionOutput);
+  const want = parseAutopgVersion(pin);
+  if (!have || !want) return null;
+  if ((have[0] - want[0] || have[1] - want[1] || have[2] - want[2]) >= 0) return null;
+  return (
+    `[cedar-pg] warning: autopg ${have.join(".")} is older than ${pin}, the version @cedarjs/pg is tested with.\n` +
+    "Upgrade (restarts the shared host; open connections from other worktrees drop):\n" +
+    `  curl -fsSL https://raw.githubusercontent.com/automagik-dev/autopg/${pin}/install.sh | AUTOPG_VERSION=${pin} bash\n` +
+    "  autopg update\n"
+  );
+}
+
+/** `autopg --version` stdout; `""` when it cannot run (treated as unknown). */
+export function readAutopgVersion(bin: string): string {
+  const result = spawnSync(bin, ["--version"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 5_000,
+  });
+  return result.stdout ?? "";
 }
 
 function readStatusJson(bin: string): string {
