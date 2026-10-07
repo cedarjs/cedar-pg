@@ -22,14 +22,15 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const AUTOPG_VERSION = readFileSync(join(HERE, "autopg-version"), "utf8").trim();
 const INSTALL_URL = `https://raw.githubusercontent.com/automagik-dev/autopg/${AUTOPG_VERSION}/install.sh`;
 const CI_INSTALL = join(HERE, "ci-install-autopg.sh");
+/** Where ci-install-autopg.sh installs (and replaces stale binaries). */
+const LOCAL_BIN = join(homedir(), ".local", "bin", "autopg");
 
 /** Resolved autopg binary (same order as runtime), or null. */
 function findAutopg() {
   if (process.env.AUTOPG_BIN && existsSync(process.env.AUTOPG_BIN)) return process.env.AUTOPG_BIN;
   const which = spawnSync("which", ["autopg"], { encoding: "utf8" });
   if (which.status === 0 && which.stdout.trim()) return which.stdout.trim();
-  const local = join(homedir(), ".local", "bin", "autopg");
-  return existsSync(local) ? local : null;
+  return existsSync(LOCAL_BIN) ? LOCAL_BIN : null;
 }
 
 function parseVersion(text) {
@@ -59,14 +60,16 @@ function main() {
   if (process.env.CEDAR_PG_SKIP_POSTINSTALL === "1") {
     return;
   }
+  const inCi = process.env.CI === "true";
+  const forceCiInstall = process.env.CEDAR_PG_INSTALL_AUTOPG === "1";
   const existing = findAutopg();
-  if (existing) {
+  // Forced CI install owns ~/.local/bin/autopg: let the installer replace a
+  // stale cached binary (it is a no-op when the pinned version is present).
+  const ciOwnsExisting = inCi && forceCiInstall && existing === LOCAL_BIN;
+  if (existing && !ciOwnsExisting) {
     warnIfOutdated(existing);
     return;
   }
-
-  const inCi = process.env.CI === "true";
-  const forceCiInstall = process.env.CEDAR_PG_INSTALL_AUTOPG === "1";
 
   // Skip in CI unless explicitly requested; CI images often bake autopg
   // or run scripts/ci-install-autopg.sh from the workflow.
@@ -79,9 +82,7 @@ function main() {
   }
 
   if (inCi && forceCiInstall) {
-    console.log(
-      `[cedarpg] autopg not found; CI binary install ${AUTOPG_VERSION} via ci-install-autopg.sh...`,
-    );
+    console.log(`[cedarpg] CI binary install ${AUTOPG_VERSION} via ci-install-autopg.sh...`);
     const result = spawnSync("bash", [CI_INSTALL], {
       stdio: "inherit",
       env: { ...process.env, AUTOPG_VERSION },

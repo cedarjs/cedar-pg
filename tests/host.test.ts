@@ -249,7 +249,12 @@ function writeFakeAutopg(opts: {
       ...(restart === "ready"
         ? [
             `  ${JSON.stringify(process.execPath)} -e ${JSON.stringify(listenJs)} >/dev/null 2>&1 &`,
-            `  until ${JSON.stringify(process.execPath)} -e ${JSON.stringify(probeJs)}; do sleep 0.05; done`,
+            "  tries=0",
+            `  until ${JSON.stringify(process.execPath)} -e ${JSON.stringify(probeJs)}; do`,
+            "    tries=$((tries + 1))",
+            '    if [ "$tries" -ge 200 ]; then echo "fake autopg: listener never became ready" >&2; exit 1; fi',
+            "    sleep 0.05",
+            "  done",
             '  echo "autopg: restarted and ready (pm2 process \\"autopg-server\\")"',
             "  exit 0",
           ]
