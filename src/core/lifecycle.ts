@@ -216,9 +216,8 @@ export type DisposeResult =
  * If the host is unavailable, leaves the lease so dispose/gc can retry.
  */
 export async function dispose(options: DisposeOptions = {}): Promise<DisposeResult> {
-  const identity = resolveWorktreeIdentity(options.root);
   const mode = options.mode ?? "test";
-  const lease = readLease(identity.root, mode);
+  const lease = readLease(resolveRoot(options.root), mode);
   if (!lease) return { dropped: false, reason: "no-lease" };
 
   let host;

@@ -1,23 +1,33 @@
 import { buildCloneDatabaseName, type DbMode } from "./naming.ts";
-import { readLease } from "./lease.ts";
+import type { Lease } from "./lease.ts";
+import { attach } from "./lifecycle.ts";
 import { applyDatabaseUrlEnv, runIfNeeded, type ResolveAcquireSkipInput } from "./policy.ts";
-import { resolveWorktreeIdentity } from "./worktree.ts";
 import {
+  adminUrlFor,
   buildDatabaseUrl,
   cloneDatabaseFromTemplate,
   dropDatabase,
   setDatabaseIsTemplate,
 } from "../providers/autopg.ts";
-import { ensureHostRunning } from "../providers/host.ts";
 
-async function resolveAdminUrl(adminUrl?: string): Promise<string> {
-  return adminUrl ?? (await ensureHostRunning()).adminUrl;
+/**
+ * Lease + admin URL the way `attach` connects: lease file, one TCP probe on the
+ * leased port, never host discovery / start / revive. Workers call this once per
+ * test file, so it must stay cheap (no git, no `autopg` processes).
+ */
+async function attachAdmin(options: {
+  root?: string;
+  mode: DbMode;
+  adminUrl?: string;
+}): Promise<{ lease: Lease; adminUrl: string }> {
+  const { lease } = await attach(options);
+  return { lease, adminUrl: options.adminUrl ?? adminUrlFor(lease.port) };
 }
 
 export type MarkTemplateOptions = {
   root?: string;
   mode: DbMode;
-  /** Superuser URL from `acquire`; when omitted, discovers/starts the host. */
+  /** Superuser URL from `acquire`; when omitted, built from the lease port (never starts the host). */
   adminUrl?: string;
 };
 
@@ -28,13 +38,7 @@ export type MarkTemplateOptions = {
 export async function markTemplate(
   options: MarkTemplateOptions,
 ): Promise<{ databaseName: string; adminUrl: string }> {
-  const identity = resolveWorktreeIdentity(options.root);
-  const mode = options.mode;
-  const lease = readLease(identity.root, mode);
-  if (!lease) {
-    throw new Error(`no ${mode} lease; run acquire before markTemplate`);
-  }
-  const adminUrl = await resolveAdminUrl(options.adminUrl);
+  const { lease, adminUrl } = await attachAdmin(options);
   await setDatabaseIsTemplate({
     adminUrl,
     databaseName: lease.databaseName,
@@ -46,7 +50,7 @@ export async function markTemplate(
 export type CloneFromTemplateOptions = {
   root?: string;
   mode: DbMode;
-  /** Superuser URL from `acquire`; when omitted, discovers/starts the host. */
+  /** Superuser URL from `acquire`; when omitted, built from the lease port (never starts the host). */
   adminUrl?: string;
   /**
    * Suffix for the clone datname (e.g. Jest worker id).
@@ -84,18 +88,12 @@ export type CloneResult = {
  * Clone the leased TEMPLATE database via admin (`CREATE DATABASE … TEMPLATE`).
  * Reuses the template role so `databaseUrl` passwords stay valid (scheme v2).
  * Provider rejects when the leased DB is not marked TEMPLATE.
- * Port comes from the lease; admin URL is passed through or rediscovered.
+ * Port comes from the lease; admin URL is passed through or built from the lease
+ * port. Fails when nothing listens there (setup should have acquired).
  * An existing clone datname fails unless `reuse` is set and the lease role owns it.
  */
 export async function cloneFromTemplate(options: CloneFromTemplateOptions): Promise<CloneResult> {
-  const identity = resolveWorktreeIdentity(options.root);
-  const mode = options.mode;
-  const lease = readLease(identity.root, mode);
-  if (!lease) {
-    throw new Error(`no ${mode} lease; run acquire + markTemplate before cloneFromTemplate`);
-  }
-
-  const adminUrl = await resolveAdminUrl(options.adminUrl);
+  const { lease, adminUrl } = await attachAdmin(options);
   const suffix = options.name ?? `${process.pid}_${Date.now().toString(36)}`;
   const databaseName = buildCloneDatabaseName(lease.databaseName, suffix);
 
@@ -114,7 +112,7 @@ export async function cloneFromTemplate(options: CloneFromTemplateOptions): Prom
   });
 
   if (options.setEnv) {
-    applyDatabaseUrlEnv(databaseUrl, { mode });
+    applyDatabaseUrlEnv(databaseUrl, { mode: options.mode });
   }
 
   const roleName = lease.roleName;
