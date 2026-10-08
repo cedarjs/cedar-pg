@@ -51,16 +51,31 @@ export function buildDatabaseName(identity: WorktreeIdentity, mode: DbMode): str
   return name;
 }
 
+/**
+ * Append `suffix` to a database name, staying ≤63 chars. When it does not fit,
+ * cut the readable head (`cpg_<repo>_<worktree>`) and keep the trailing
+ * `_<mode>_<pathHash8>` whole: that hash is what keeps worktrees apart.
+ */
+function appendKeepingHash(databaseName: string, suffix: string): string {
+  const full = `${databaseName}${suffix}`;
+  if (full.length <= PG_MAX) {
+    return full;
+  }
+  const tail = /_[^_]+_[^_]+$/.exec(databaseName)?.[0] ?? "";
+  const head = databaseName
+    .slice(0, Math.max(0, PG_MAX - tail.length - suffix.length))
+    .replace(/_+$/, "");
+  return `${head}${tail}${suffix}`.slice(0, PG_MAX);
+}
+
+/** Role for a database name: `<databaseName>_role`, cut by `appendKeepingHash`. */
 export function buildRoleName(databaseName: string): string {
-  const suffix = "_role";
-  const maxBase = PG_MAX - suffix.length;
-  const base = databaseName.slice(0, maxBase);
-  return `${base}${suffix}`;
+  return appendKeepingHash(databaseName, "_role");
 }
 
 /**
  * Build a worker clone datname from a TEMPLATE database name.
- * Layout: `<template>_c_<suffix>` truncated to ≤63 chars (keeps suffix).
+ * Layout: `<template>_c_<suffix>`, cut by `appendKeepingHash` (keeps mode, hash, and suffix).
  */
 export function buildCloneDatabaseName(templateName: string, suffix: string): string {
   const safe = suffix
@@ -69,8 +84,5 @@ export function buildCloneDatabaseName(templateName: string, suffix: string): st
     .replace(/^_+|_+$/g, "")
     .slice(0, 24);
   const tag = safe.length > 0 ? safe : "w";
-  const sep = "_c_";
-  const maxTemplate = PG_MAX - sep.length - tag.length;
-  const base = templateName.slice(0, Math.max(1, maxTemplate));
-  return `${base}${sep}${tag}`.slice(0, PG_MAX);
+  return appendKeepingHash(templateName, `_c_${tag}`);
 }
