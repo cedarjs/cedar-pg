@@ -1,4 +1,10 @@
+import { readFileSync } from "node:fs";
 import { defineConfig } from "vite-plus";
+
+// Single autopg pin (scripts/autopg-version), inlined so runtime can warn on an older host.
+const define = {
+  __CEDAR_PG_AUTOPG_PIN__: JSON.stringify(readFileSync("scripts/autopg-version", "utf8").trim()),
+};
 
 export default defineConfig({
   staged: {
@@ -18,6 +24,7 @@ export default defineConfig({
       "jest-template": "src/adapters/jest-template.ts",
     },
 
+    define,
     dts: true,
     format: ["esm", "cjs"],
     sourcemap: true,
@@ -46,6 +53,7 @@ export default defineConfig({
     },
   },
   fmt: {},
+  define,
   test: {
     include: ["tests/**/*.test.ts"],
   },

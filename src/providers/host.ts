@@ -4,7 +4,6 @@ import {
   existsSync,
   mkdirSync,
   openSync,
-  readdirSync,
   readFileSync,
   rmSync,
   statfsSync,
@@ -17,6 +16,8 @@ import {
   discoverHost,
   discoverRegistration,
   INSTALL_HINT,
+  outdatedAutopgWarning,
+  readAutopgVersion,
   requireAutopgBin,
   type AutopgDiscovery,
   type AutopgRegistration,
@@ -44,7 +45,7 @@ const EPHEMERAL_PORT = 55432;
 
 const HOST_READY_MS = 30_000;
 const HOST_POLL_MS = 200;
-/** `pm2 restart` of an existing process is quick; then registered postmaster if still dark. */
+/** `autopg restart` exits 0 only once ready; grace covers older autopg that returned early. */
 const LOCAL_RESTART_READY_MS = 10_000;
 
 /** Soft minimum free bytes on /dev/shm before RAM-backed ephemeral start (warns only). */
@@ -57,8 +58,9 @@ export const EPHEMERAL_SHM_MIN_FREE_BYTES = 512 * 1024 * 1024;
 export const EPHEMERAL_SHM_HINT =
   "Ephemeral autopg uses /dev/shm with --ram. If initdb fails with Disk quota / No space (Postgres 53100):\n" +
   "  1. Enlarge tmpfs (cloud VMs often default to ~64MB): sudo mount -o remount,size=6G /dev/shm\n" +
-  "  2. Clear leftovers from OOM-killed runs (your test data only):\n" +
-  "     rm -rf /dev/shm/cedar-pg-* /dev/shm/pgserve-* /dev/shm/PostgreSQL.*";
+  "  2. cedar-pg already removes its own leftover dir (/dev/shm/cedar-pg-<uid>) on cold start.\n" +
+  "     Never rm /dev/shm/PostgreSQL.*: those segments belong to every running Postgres,\n" +
+  "     and deleting a live one breaks new connections to that host (58P01).";
 
 /**
  * Resolve how to start a host when none is listening.
@@ -118,54 +120,6 @@ export function formatHostStartError(detail: string, useRamShm = false): string 
   return `Failed to start autopg host.\n${detail}\n${INSTALL_HINT}${hint}`;
 }
 
-/**
- * Remove leftover ephemeral data dirs under `/dev/shm` (and the recipe dataDir).
- * Safe for OOM-killed CI/cloud runs that leave `cedar-pg-*` / `pgserve-*` /
- * `PostgreSQL.*` filling tmpfs.
- *
- * Only called on ephemeral cold start, i.e. when the recipe port has no listener —
- * never while a host owns those dirs.
- */
-export function pruneStaleEphemeralDataDirs(opts: {
-  dataDir: string;
-  /** Parent of RAM dirs; default `/dev/shm` when it exists. */
-  shmRoot?: string;
-}): string[] {
-  const removed: string[] = [];
-  const tryRm = (path: string) => {
-    if (!existsSync(path)) return;
-    try {
-      rmSync(path, { recursive: true, force: true });
-      removed.push(path);
-    } catch {
-      // best-effort: next initdb will surface a clearer error
-    }
-  };
-
-  tryRm(opts.dataDir);
-
-  const shmRoot = opts.shmRoot ?? (existsSync("/dev/shm") ? "/dev/shm" : undefined);
-  if (!shmRoot) return removed;
-
-  let entries: string[] = [];
-  try {
-    entries = readdirSync(shmRoot);
-  } catch {
-    return removed;
-  }
-
-  for (const name of entries) {
-    if (
-      name.startsWith("cedar-pg-") ||
-      name.startsWith("pgserve-") ||
-      name.startsWith("PostgreSQL.")
-    ) {
-      tryRm(join(shmRoot, name));
-    }
-  }
-  return removed;
-}
-
 /** Free bytes on `path`, or `null` if unavailable. */
 function freeBytesOn(path: string): number | null {
   try {
@@ -176,16 +130,16 @@ function freeBytesOn(path: string): number | null {
   }
 }
 
-/** Run a one-shot autopg verb. `failure` is null on exit 0. */
-function runAutopg(bin: string, argv: string[]): { failure: string | null; output: string } {
+/** Run a one-shot autopg verb. Returns failure detail, or `null` on exit 0. */
+function runAutopg(bin: string, argv: string[]): string | null {
   const result = spawnSync(bin, argv, {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
+  if (result.error) return result.error.message;
+  if (result.status === 0) return null;
   const output = `${result.stderr ?? ""}${result.stdout ?? ""}`;
-  if (result.error) return { failure: result.error.message, output };
-  if (result.status === 0) return { failure: null, output };
-  return { failure: `exit ${result.status}\n${output.trim()}`.trim(), output };
+  return `exit ${result.status}\n${output.trim()}`.trim();
 }
 
 /** True when something accepts TCP on 127.0.0.1:port (postmaster live, not just admin.json). */
@@ -406,10 +360,11 @@ async function reviveRegisteredPostmaster(
  * Revive the user's registered autopg host — same port, same `~/.autopg/data`,
  * still running after this process exits. Never a second local Postgres.
  *
- * `restart` exit 0 is not a listener: pm2-less hosts print "respawned daemon"
- * and return 0. If still dark, {@link reviveRegisteredPostmaster} on the
- * registered port/data. Do not `install` on an already-registered host (wants
- * pm2, can rewrite `admin.json`). `install` is only for a never-registered machine.
+ * `restart` drives pm2 only and exits 0 once ready; without pm2 (or under another
+ * supervisor) it exits 1. Either way TCP is the gate: if still dark,
+ * {@link reviveRegisteredPostmaster} on the registered port/data. Do not
+ * `install` on an already-registered host (wants pm2, refuses a port change).
+ * `install` is only for a never-registered machine.
  */
 async function startLocalHost(
   bin: string,
@@ -417,21 +372,13 @@ async function startLocalHost(
 ): Promise<AutopgDiscovery> {
   const failures: string[] = [];
 
-  const restart = runAutopg(bin, ["restart"]);
-  if (restart.failure) {
-    failures.push(`autopg restart: ${restart.failure}`);
+  const restartFailure = runAutopg(bin, ["restart"]);
+  if (restartFailure) {
+    failures.push(`autopg restart: ${restartFailure}`);
   } else {
-    // pm2-less restart prints "respawned daemon" and exits 0 with no listener
-    // (autopg v3 `restartLocally`; wording pinned by scripts/autopg-version).
-    // Don't burn the pm2 grace period; fall through to registered postmaster.
-    const readyMs = /respawned daemon/i.test(restart.output) ? 0 : LOCAL_RESTART_READY_MS;
-    const attached = await attachLiveHost(bin, readyMs);
+    const attached = await attachLiveHost(bin, LOCAL_RESTART_READY_MS);
     if (attached) return attached;
-    failures.push(
-      readyMs === 0
-        ? "autopg restart: no listener (respawned daemon without TCP)"
-        : `autopg restart: no listener within ${readyMs}ms`,
-    );
+    failures.push(`autopg restart: no listener within ${LOCAL_RESTART_READY_MS}ms`);
   }
 
   if (registered) {
@@ -439,9 +386,9 @@ async function startLocalHost(
     if (!failure) return registered.host;
     failures.push(failure);
   } else {
-    const install = runAutopg(bin, ["install"]);
-    if (install.failure) {
-      failures.push(`autopg install: ${install.failure}`);
+    const installFailure = runAutopg(bin, ["install"]);
+    if (installFailure) {
+      failures.push(`autopg install: ${installFailure}`);
     } else {
       const attached = await attachLiveHost(bin, HOST_READY_MS);
       if (attached) return attached;
@@ -469,7 +416,10 @@ async function startEphemeralHost(bin: string): Promise<AutopgDiscovery> {
   if (await canConnect(recipe.port)) return discoveryFromRecipe(bin, recipe);
 
   const useRamShm = recipe.postmasterArgs.includes("--ram");
-  pruneStaleEphemeralDataDirs({ dataDir: recipe.dataDir });
+  // Nothing listens on the recipe port, so its data dir is a dead run's leftover.
+  // Only this cedar-pg-owned path: `/dev/shm/PostgreSQL.*` / `pgserve-*` belong to
+  // every Postgres on the machine (the registered host included) and are never touched.
+  rmSync(recipe.dataDir, { recursive: true, force: true });
 
   if (useRamShm) {
     const free = freeBytesOn("/dev/shm");
@@ -498,11 +448,22 @@ async function startEphemeralHost(bin: string): Promise<AutopgDiscovery> {
   return discoveryFromRecipe(bin, recipe);
 }
 
+let autopgVersionChecked = false;
+
+/** Once per process: warn (never fail, never upgrade) when autopg is older than the pin. */
+function warnIfAutopgOutdated(bin: string): void {
+  if (autopgVersionChecked) return;
+  autopgVersionChecked = true;
+  const warning = outdatedAutopgWarning(readAutopgVersion(bin));
+  if (warning) process.stderr.write(warning);
+}
+
 /**
  * Attach to a listening autopg host, else start one per
  * {@link resolveHostStartPolicy}. Internal: callers use `acquire` / `adminUrl`.
  */
 export async function ensureHostRunning(bin = requireAutopgBin()): Promise<AutopgDiscovery> {
+  warnIfAutopgOutdated(bin);
   let registered: AutopgRegistration | null = null;
   try {
     registered = discoverRegistration(bin);

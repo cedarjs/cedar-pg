@@ -32,7 +32,7 @@ vp run smoke:pg     # pack → Vitest + Jest adapters against real ephemeral Pos
 
 CI (`.github/workflows/ci.yml`): `vp check` → `vp test` → `vp run smoke` → `vp run smoke:pg`, with `.github/actions/setup-autopg` for the binary.
 
-Bump autopg via the single pin file `scripts/autopg-version` (postinstall, CI install, docs). Do not scatter version strings.
+Bump autopg via the single pin file `scripts/autopg-version` (postinstall, CI install, docs; inlined into the runtime as `AUTOPG_PINNED_VERSION` via `define` in `vite.config.ts`). Do not scatter version strings. An older local autopg gets a warning, never an automatic upgrade (upgrading restarts the shared host).
 
 ## Source layout
 
@@ -89,7 +89,7 @@ Keep logic in the canonical layer. Prefer reuse over one-off branches in adapter
 
 **Migrate stays app-owned.** Stock `@cedarjs/pg/jest` / `vitest` only acquire/dispose. TEMPLATE adapters require `createGlobalSetup({ migrate })`; string-resolving the package entry without a migrate hook must throw.
 
-**Host bootstrap stays internal.** Callers use `acquire` (and `adminUrl`). Do not re-export `ensureHostRunning` or grow a public host-options bag; ephemeral behavior is env-driven (`CI`, `CEDAR_PG_EPHEMERAL_HOST`). Liveness is a TCP accept, never `autopg status` alone (`status=stopped` / `runtime.live` are not attach gates). Local recovery revives the **registered** host (`autopg restart`, then detached `autopg postmaster` on the registered port/data if still no listener). Revive paths come only from `autopg status --json`: never guess a data dir, and never spawn against a live `postmaster.pid` owner (wait for it). Do not `autopg install` on an already-registered host (it demands pm2). An owned postmaster on a **different** port is ephemeral/CI-only, and `CEDAR_PG_EPHEMERAL_HOST=0` disables that path everywhere. Do not add a second local Postgres port/data dir.
+**Host bootstrap stays internal.** Callers use `acquire` (and `adminUrl`). Do not re-export `ensureHostRunning` or grow a public host-options bag; ephemeral behavior is env-driven (`CI`, `CEDAR_PG_EPHEMERAL_HOST`). Liveness is a TCP accept, never `autopg status` alone (`status` / `ready` / `runtime.live` are not attach gates: a bare postmaster reports `stopped` / `ready: false`). Local recovery revives the **registered** host (`autopg restart`, then detached `autopg postmaster` on the registered port/data if still no listener). Revive paths come only from `autopg status --json`: never guess a data dir, and never spawn against a live `postmaster.pid` owner (wait for it). `autopg restart` (≥ v3.2) is pm2-only: exit 0 means ready, otherwise exit 1. Do not `autopg install` on an already-registered host (it demands pm2 and refuses a port change). An owned postmaster on a **different** port is ephemeral/CI-only, and `CEDAR_PG_EPHEMERAL_HOST=0` disables that path everywhere. Do not add a second local Postgres port/data dir.
 
 ## Env and policy (easy to get wrong)
 

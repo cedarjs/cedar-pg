@@ -9,11 +9,17 @@
 - `cloneWorkerDatabase({ reset })` (Jest / Vitest TEMPLATE) resets the worker clone at the start of every test file. The default `"truncate"` runs `TRUNCATE ... RESTART IDENTITY` over every user table, skipping system schemas, temp tables, and extension-owned tables. Rows from earlier files in the worker are gone, and `serial` / identity IDs restart at 1, so suites that expect `id = 1` work on a reused clone. This also clears rows that `migrate` seeded into the TEMPLATE. Pass `reset: "none"` to keep the clone's rows and reset on your own. A skipped clone (external URL, `CEDAR_PG=0`) is never truncated.
 - `cloneFromTemplate({ reuse: true })` keeps an existing `<template>_c_<name>` owned by the lease role instead of failing with `database already exists`. A clone name owned by any other role still fails, with the owner in the message.
 
+- Warn when the installed autopg is older than the pin (`scripts/autopg-version`, inlined at build). The first host attach of each process (`acquire`, `cedarpg run`, TEMPLATE setup) and `postinstall` print the upgrade commands (pinned `install.sh`, then `autopg update`). It is a warning only: cedar-pg never upgrades a local host, because that restarts the host every worktree shares.
+
 ### Changed
 
+- `scripts/ci-install-autopg.sh` (postinstall CI path and the `setup-autopg` Action) reuses `~/.local/bin/autopg` only when it reports exactly the pinned version; any other binary is replaced. It used to skip whenever any autopg was present, so cached runners stayed on an old release. With `CI=true CEDAR_PG_INSTALL_AUTOPG=1`, postinstall now runs the installer even when `~/.local/bin/autopg` already exists, so a stale cached binary is replaced (binaries elsewhere still only get the upgrade warning).
 - Nx canonical shape: one `db:ready` acquires + migrates. Children either preload `@cedarjs/pg/dev-env` or use `cedarpg run --attach` (was `cedarpg run --force` per child). Children no longer run DDL, so concurrent dev servers and workers no longer race. Plain `cedarpg run` is unchanged for one-shot acquire + exec. The README Nx section is rewritten as a generic setup guide.
 - TEMPLATE setup (`setupTemplateMode`, Jest / Vitest `createGlobalSetup`) acquires with `fresh: true`. Leftover TEMPLATE / clone databases from a crashed run are dropped before `migrate`, so migrate always starts empty and consumers need no pre-cleanup.
 - TEMPLATE `cloneWorkerDatabase` truncates at the start of **every** test file by default, the first file on a fresh clone included, not only when it reuses a clone. Each worker clone used to start with the TEMPLATE's rows. Now every file starts with empty user tables, and rows that `migrate` seeded into the TEMPLATE are wiped, including bookkeeping tables such as `_prisma_migrations`. Migration: if your tests depend on seeded rows, either seed them in your worker setup after `cloneWorkerDatabase()`, or pass `cloneWorkerDatabase({ reset: "none" })` and reset on your own.
+
+- autopg pin bumped `v3.0.7` → `v3.2.2` (`scripts/autopg-version`; postinstall, `ci-install-autopg.sh`, and the `setup-autopg` Action follow it). v3.2 fixes a host that hung after days under load (stderr drain), keeps the pm2 registration across `pm2 resurrect`, and makes `autopg install` / `restart` wait for readiness. Postinstall only installs autopg when it is missing (except the forced CI path above); run `autopg update` to move an existing host.
+- Local host recovery follows v3.2 `autopg restart`: exit 0 means ready, and a pm2-less or non-pm2 host exits 1, after which cedar-pg revives the registered postmaster as before. The v3.0.x "respawned daemon" exit-0 special case is removed; on a pm2-less host still running autopg v3.0.x, recovery waits up to 10s before the revive.
 
 ### Removed
 
@@ -21,6 +27,7 @@
 
 ### Fixed
 
+- Ephemeral host cold start no longer deletes `/dev/shm/PostgreSQL.*` and `pgserve-*`. Those are live shared-memory segments of every Postgres on the machine. Running with `CI=true` or `CEDAR_PG_EPHEMERAL_HOST=1` next to a registered local host deleted that host's segment, and every new connection to it then failed with `58P01 could not open shared memory segment` until it was restarted. Cold start now removes only cedar-pg's own leftover data dir (`/dev/shm/cedar-pg-<uid>`). The `53100` / quota hint no longer recommends `rm /dev/shm/PostgreSQL.*`.
 - TEMPLATE `cloneWorkerDatabase` reuses the worker's `<template>_c_<workerId>` in Postgres across Jest test files. The `0.2.0-beta.0` fix cached the clone on `globalThis`, but Jest resets `globalThis` and the module registry for each test file. So the second file in a worker still ran `CREATE DATABASE` and failed with `database already exists`. The in-memory memo is removed; the database is the source of truth. As a result, calling it again with a different `root` / `name` in one process no longer throws: each call clones or reuses its own name. `smoke:pg` now runs two Jest files in one worker, after a seeded crashed run.
 
 ## 0.2.0-beta.1

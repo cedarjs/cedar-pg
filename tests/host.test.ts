@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +11,6 @@ import {
   EPHEMERAL_SHM_HINT,
   formatHostStartError,
   looksLikeShmSpaceError,
-  pruneStaleEphemeralDataDirs,
   resolveHostStartPolicy,
   waitForListener,
 } from "../src/providers/host.ts";
@@ -155,42 +154,19 @@ test("formatHostStartError appends shm hint only for RAM quota failures", () => 
   expect(formatHostStartError("Disk quota exceeded")).not.toContain("Enlarge tmpfs");
 });
 
-test("pruneStaleEphemeralDataDirs removes cedar-pg / pgserve / PostgreSQL leftovers only", () => {
-  const root = mkdtempSync(join(tmpdir(), "cedar-shm-"));
-  const dataDir = join(root, "cedar-pg-host");
-  const keep = join(root, "other-file");
-  mkdirSync(dataDir);
-  mkdirSync(join(root, "cedar-pg-9"));
-  mkdirSync(join(root, "pgserve-abc"));
-  mkdirSync(join(root, "PostgreSQL.12345"));
-  writeFileSync(keep, "x");
-
-  const removed = pruneStaleEphemeralDataDirs({ dataDir, shmRoot: root });
-
-  expect(removed.sort()).toEqual(
-    [
-      dataDir,
-      join(root, "cedar-pg-9"),
-      join(root, "pgserve-abc"),
-      join(root, "PostgreSQL.12345"),
-    ].sort(),
-  );
-  expect(existsSync(keep)).toBe(true);
-  rmSync(root, { recursive: true, force: true });
-});
-
 /**
- * Fake `autopg` that reports an installed-but-stopped pm2 registration
- * (`status=stopped`, `pid=null`, `runtime.live=true`) on `port`.
+ * Fake `autopg` (v3.2 `status --json` shape) that reports an installed-but-stopped
+ * pm2 registration (`status=stopped`, `ready=false`, `runtime.live=true`) on `port`.
  *
- * Start verbs are configurable: pm2-less `restart` may no-op (exit 0) or fail;
+ * Start verbs are configurable: `restart` either refuses (pm2 unavailable, exit 1)
+ * or, like v3.2, exits 0 only once its supervised postmaster listens (`ready`);
  * registered revive uses `postmaster` on the status JSON data/socket dirs.
  * `postmaster: "lose"` models a concurrent start winning the data-dir lock: a
  * background listener owns `<dataDir>/postmaster.pid` and ours exits 1.
  */
 function writeFakeAutopg(opts: {
   port: number;
-  restart?: "fail" | "noop";
+  restart?: "fail" | "ready";
   postmaster?: "fail" | "listen" | "lose";
   report?: { dataDir?: boolean; socketDir?: boolean };
 }): {
@@ -216,6 +192,9 @@ function writeFakeAutopg(opts: {
     installed: true,
     name: "autopg-server",
     status: "stopped",
+    ready: false,
+    supervisorStatus: "stopped",
+    persisted: true,
     pid: null,
     port: opts.port,
     dataDir: opts.report?.dataDir === false ? null : dataDir,
@@ -232,6 +211,11 @@ function writeFakeAutopg(opts: {
     `server.listen(${opts.port}, "127.0.0.1", () => {`,
     `  writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));`,
     `});`,
+  ].join("");
+
+  const probeJs = [
+    `require("node:net").connect(${opts.port}, "127.0.0.1")`,
+    `.on("connect", () => process.exit(0)).on("error", () => process.exit(1));`,
   ].join("");
 
   // Winner of a concurrent start, in its own process group (like a real
@@ -255,15 +239,29 @@ function writeFakeAutopg(opts: {
     bin,
     [
       "#!/bin/sh",
+      'if [ "$1" = "--version" ]; then echo "autopg 3.2.2"; exit 0; fi',
       `echo "$@" >> ${JSON.stringify(log)}`,
       'if [ "$1" = "status" ]; then',
       `  echo ${JSON.stringify(statusJson)}`,
       "  exit 0",
       "fi",
       'if [ "$1" = "restart" ]; then',
-      ...(restart === "noop"
-        ? ['  echo "autopg: respawned daemon" >&2', "  exit 0"]
-        : ['  echo "fake autopg: restart refused" >&2', "  exit 1"]),
+      ...(restart === "ready"
+        ? [
+            `  ${JSON.stringify(process.execPath)} -e ${JSON.stringify(listenJs)} >/dev/null 2>&1 &`,
+            "  tries=0",
+            `  until ${JSON.stringify(process.execPath)} -e ${JSON.stringify(probeJs)}; do`,
+            "    tries=$((tries + 1))",
+            '    if [ "$tries" -ge 200 ]; then echo "fake autopg: listener never became ready" >&2; exit 1; fi',
+            "    sleep 0.05",
+            "  done",
+            '  echo "autopg: restarted and ready (pm2 process \\"autopg-server\\")"',
+            "  exit 0",
+          ]
+        : [
+            '  echo "autopg: pm2 is unavailable; cannot restart the configured AutoPG service" >&2',
+            "  exit 1",
+          ]),
       "fi",
       'if [ "$1" = "install" ]; then',
       '  echo "pm2 is required for this command" >&2',
@@ -398,9 +396,9 @@ test("ensureHostRunning fail-closed on a dead registered port does not require p
   }
 });
 
-test("ensureHostRunning treats pm2-less restart (respawned daemon, no TCP) as a no-op", async () => {
+test("ensureHostRunning attaches after a ready pm2 restart without reviving", async () => {
   const port = await freePort();
-  const fake = writeFakeAutopg({ port, restart: "noop", postmaster: "listen" });
+  const fake = writeFakeAutopg({ port, restart: "ready" });
 
   try {
     await withLocalPolicy(async () => {
@@ -410,12 +408,7 @@ test("ensureHostRunning treats pm2-less restart (respawned daemon, no TCP) as a 
         bin: fake.bin,
       });
     });
-    expect(calls(fake.log)).toEqual([
-      "status --json",
-      "restart",
-      "status --json",
-      `postmaster --port ${port} --data ${fake.dataDir} --socket-dir ${fake.socketDir}`,
-    ]);
+    expect(calls(fake.log)).toEqual(["status --json", "restart", "status --json"]);
   } finally {
     killPidFile(fake.pidFile);
     rmSync(fake.dir, { recursive: true, force: true });
