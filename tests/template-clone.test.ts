@@ -1,5 +1,6 @@
 import { expect, test, vi } from "vite-plus/test";
 import { mkdtempSync, rmSync } from "node:fs";
+import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { listRegistryLeases, readLease, writeLease, type Lease } from "../src/core/lease.ts";
@@ -32,6 +33,7 @@ async function withHostAndAutopgMocks<T>(
     return {
       ...actual,
       ensureHostRunning: async () => ({ port: 5433, adminUrl, bin: "autopg" }),
+      waitForListener: async () => true,
     };
   });
   vi.doMock("../src/providers/autopg.ts", async () => {
@@ -309,34 +311,91 @@ test("markTemplate requires a lease", async () => {
   }
 });
 
-test("markTemplate + cloneFromTemplate rediscover adminUrl when omitted", async () => {
+/** Workers must attach like `attach`: no host discovery, start, or revive. */
+async function withLeaseOnlyHost<T>(
+  autopgMocks: Record<string, unknown>,
+  run: () => Promise<T>,
+): Promise<T> {
+  vi.resetModules();
+  vi.doMock("../src/providers/host.ts", async () => {
+    const actual = await vi.importActual<typeof import("../src/providers/host.ts")>(
+      "../src/providers/host.ts",
+    );
+    return {
+      ...actual,
+      ensureHostRunning: vi.fn(async () => {
+        throw new Error("workers must not call ensureHostRunning");
+      }),
+    };
+  });
+  vi.doMock("../src/providers/autopg.ts", async () => {
+    const actual = await vi.importActual<typeof import("../src/providers/autopg.ts")>(
+      "../src/providers/autopg.ts",
+    );
+    const forbidden = (name: string) =>
+      vi.fn(() => {
+        throw new Error(`workers must not call ${name}`);
+      });
+    return {
+      ...actual,
+      discoverHost: forbidden("discoverHost"),
+      discoverRegistration: forbidden("discoverRegistration"),
+      readAutopgVersion: forbidden("readAutopgVersion"),
+      ...autopgMocks,
+    };
+  });
+  try {
+    return await run();
+  } finally {
+    vi.doUnmock("../src/providers/host.ts");
+    vi.doUnmock("../src/providers/autopg.ts");
+    vi.resetModules();
+  }
+}
+
+function listen(): Promise<{ server: Server; port: number }> {
+  return new Promise((resolve, reject) => {
+    const server = createServer((socket) => socket.end());
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (address && typeof address !== "string") resolve({ server, port: address.port });
+      else reject(new Error("no TCP address"));
+    });
+  });
+}
+
+function close(server: Server): Promise<void> {
+  return new Promise((resolve) => server.close(() => resolve()));
+}
+
+test("markTemplate + cloneFromTemplate without adminUrl attach via the lease port", async () => {
   const registry = mkdtempSync(join(tmpdir(), "cedarpg-reg-"));
   const root = mkdtempSync(join(tmpdir(), "cedarpg-wt-"));
   const prev = process.env.CEDAR_PG_REGISTRY_DIR;
   process.env.CEDAR_PG_REGISTRY_DIR = registry;
+  const { server, port } = await listen();
 
-  const adminUrl = "postgresql://postgres:postgres@127.0.0.1:5433/postgres";
-  const templateName = "cpg_cedar_main_test_rediscover";
-  writeLease(makeLease({ root, databaseName: templateName }));
+  const templateName = "cpg_cedar_main_test_leaseport";
+  writeLease(makeLease({ root, databaseName: templateName, port }));
 
   const setTemplate = vi.fn(async () => {});
   const cloneDb = vi.fn(async () => {});
 
   try {
-    await withHostAndAutopgMocks(
-      adminUrl,
-      {
-        setDatabaseIsTemplate: setTemplate,
-        cloneDatabaseFromTemplate: cloneDb,
-      },
+    await withLeaseOnlyHost(
+      { setDatabaseIsTemplate: setTemplate, cloneDatabaseFromTemplate: cloneDb },
       async () => {
+        const { adminUrlFor } = await import("../src/providers/autopg.ts");
         const { markTemplate, cloneFromTemplate } = await import("../src/core/template.ts");
+        const adminUrl = adminUrlFor(port);
         await expect(markTemplate({ root, mode: "test" })).resolves.toEqual({
           databaseName: templateName,
           adminUrl,
         });
         const worker = await cloneFromTemplate({ root, mode: "test", name: "w" });
         expect(worker.adminUrl).toBe(adminUrl);
+        expect(worker.port).toBe(port);
         expect(setTemplate).toHaveBeenCalledWith({
           adminUrl,
           databaseName: templateName,
@@ -350,6 +409,35 @@ test("markTemplate + cloneFromTemplate rediscover adminUrl when omitted", async 
         });
       },
     );
+  } finally {
+    await close(server);
+    if (prev === undefined) delete process.env.CEDAR_PG_REGISTRY_DIR;
+    else process.env.CEDAR_PG_REGISTRY_DIR = prev;
+    rmSync(registry, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cloneFromTemplate fails clearly on a dark leased port instead of starting the host", async () => {
+  const registry = mkdtempSync(join(tmpdir(), "cedarpg-reg-"));
+  const root = mkdtempSync(join(tmpdir(), "cedarpg-wt-"));
+  const prev = process.env.CEDAR_PG_REGISTRY_DIR;
+  process.env.CEDAR_PG_REGISTRY_DIR = registry;
+  const { server, port } = await listen();
+  await close(server);
+
+  const templateName = "cpg_cedar_main_test_darkport1";
+  writeLease(makeLease({ root, databaseName: templateName, port }));
+  const cloneDb = vi.fn(async () => {});
+
+  try {
+    await withLeaseOnlyHost({ cloneDatabaseFromTemplate: cloneDb }, async () => {
+      const { cloneFromTemplate } = await import("../src/core/template.ts");
+      await expect(cloneFromTemplate({ root, mode: "test", name: "w" })).rejects.toThrow(
+        new RegExp(`${templateName} points at 127\\.0\\.0\\.1:${port}, but nothing is listening`),
+      );
+      expect(cloneDb).not.toHaveBeenCalled();
+    });
   } finally {
     if (prev === undefined) delete process.env.CEDAR_PG_REGISTRY_DIR;
     else process.env.CEDAR_PG_REGISTRY_DIR = prev;
