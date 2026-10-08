@@ -15,7 +15,7 @@ Worktree-isolated local Postgres for Vite+, Nx, and CedarJS, on top of [autopg](
 
 Mental model: autopg is the host; cedar-pg is the lease + naming + policy layer so parallel git worktrees do not share one DB.
 
-Published npm package: `@cedarjs/pg` (CLI binary: `cedarpg`). Beta (`0.2.0-beta.x`, `beta` dist-tag) — public APIs may still change; treat renames and export surface as intentional product decisions, not drive-by churn.
+Published npm package: `@cedarjs/pg` (CLI binary: `cedarpg`). Pre-1.0 (`0.x`, `latest` dist-tag; minor bumps may break) — public APIs may still change; treat renames and export surface as intentional product decisions, not drive-by churn.
 
 ## Commands
 

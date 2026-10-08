@@ -87,7 +87,7 @@ export async function acquire(options: AcquireOptions): Promise<AcquireResult> {
   const databaseName = buildDatabaseName(identity, mode);
   // A lease for this database pins its role: objects inside belong to that role,
   // and handing the DB to a newly derived name (naming changed for long names in
-  // 0.2.0-beta.2) would leave the app without access to its own tables.
+  // 0.3.0) would leave the app without access to its own tables.
   const leased = readLease(identity.root, mode);
   const roleName =
     leased?.databaseName === databaseName ? leased.roleName : buildRoleName(databaseName);
