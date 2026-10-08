@@ -13,6 +13,7 @@
 
 ### Changed
 
+- `cedarpg acquire --force` is no longer documented. It was always a no-op: `acquire` never applies the external-URL escape hatch, so there was nothing to force. The flag is still accepted and ignored, so existing scripts keep working. `cedarpg run --force` is unchanged.
 - `scripts/ci-install-autopg.sh` (postinstall CI path and the `setup-autopg` Action) reuses `~/.local/bin/autopg` only when it reports exactly the pinned version; any other binary is replaced. It used to skip whenever any autopg was present, so cached runners stayed on an old release. With `CI=true CEDAR_PG_INSTALL_AUTOPG=1`, postinstall now runs the installer even when `~/.local/bin/autopg` already exists, so a stale cached binary is replaced (binaries elsewhere still only get the upgrade warning).
 - Nx canonical shape: one `db:ready` acquires + migrates. Children either preload `@cedarjs/pg/dev-env` or use `cedarpg run --attach` (was `cedarpg run --force` per child). Children no longer run DDL, so concurrent dev servers and workers no longer race. Plain `cedarpg run` is unchanged for one-shot acquire + exec. The README Nx section is rewritten as a generic setup guide.
 - TEMPLATE setup (`setupTemplateMode`, Jest / Vitest `createGlobalSetup`) acquires with `fresh: true`. Leftover TEMPLATE / clone databases from a crashed run are dropped before `migrate`, so migrate always starts empty and consumers need no pre-cleanup.

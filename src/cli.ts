@@ -11,7 +11,7 @@ function printHelp(): void {
   process.stdout.write(`${CLI_NAME}: worktree-isolated local Postgres (via autopg)
 
 Usage:
-  ${CLI_NAME} acquire --mode=dev|test [--root <path>] [--force] [--json] [--print-env]
+  ${CLI_NAME} acquire --mode=dev|test [--root <path>] [--json] [--print-env]
   ${CLI_NAME} run --mode=dev|test [--root <path>] [--force] [--attach] -- <cmd…>
   ${CLI_NAME} dispose [--mode=dev|test] [--root <path>]
   ${CLI_NAME} gc [--json]
@@ -169,7 +169,6 @@ async function main(): Promise<number> {
 
   try {
     if (args.cmd === "acquire") {
-      if (args.force) process.env.CEDAR_PG_FORCE = "1";
       const mode = args.mode ?? "dev";
       const result = await acquire({
         root: args.root,
