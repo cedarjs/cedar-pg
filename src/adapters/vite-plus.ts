@@ -20,10 +20,11 @@
  *         dependsOn: ['db:acquire-test'],
  *         env: ['DATABASE_URL', 'TEST_DATABASE_URL'],
  *       },
+ *       // dependsOn does not forward env: attach hands vp dev the lease URL.
  *       dev: {
- *         command: 'vp dev',
+ *         command: 'cedarpg run --attach --mode=dev -- vp dev',
  *         dependsOn: ['db:acquire'],
- *         env: ['DATABASE_URL'],
+ *         cache: false,
  *       },
  *     },
  *   },

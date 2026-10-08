@@ -106,14 +106,16 @@ export default defineConfig({
         env: ["DATABASE_URL", "TEST_DATABASE_URL"],
       },
       dev: {
-        command: "vp dev",
+        command: "cedarpg run --attach --mode=dev -- vp dev",
         dependsOn: ["db:acquire"],
-        env: ["DATABASE_URL"],
+        cache: false,
       },
     },
   },
 });
 ```
+
+Like Nx `dependsOn`, Vite+ `dependsOn` does not forward env, and task `env` only fingerprints and passes through variables already set in the `vp` process. So `dev` acquires once via `db:acquire`, then `cedarpg run --attach` hands the lease `DATABASE_URL` to `vp dev`. `test` needs no wrapper: the stock Vitest setup acquires and sets the URL itself.
 
 `cedarPgDev()` does not acquire. Keep `dependsOn: ["db:acquire"]`. On listen it prints a status panel (TTY, non-CI). Vite CLI shortcuts (`key` then Enter; also listed under `h`):
 
