@@ -1,5 +1,6 @@
 import { expect, test } from "vite-plus/test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +13,7 @@ import {
   formatHostStartError,
   looksLikeShmSpaceError,
   resolveHostStartPolicy,
+  startEphemeralHost,
   waitForListener,
 } from "../src/providers/host.ts";
 
@@ -484,6 +486,75 @@ test("ensureHostRunning attaches to the winner after losing the data-dir lock", 
     );
   } finally {
     killPidFile(ownerPidFile);
+    rmSync(fake.dir, { recursive: true, force: true });
+  }
+});
+
+/** Ephemeral recipe on a free port under the fake's temp dir (never /dev/shm). */
+async function ephemeralFixture(postmaster: "fail" | "listen") {
+  const port = await freePort();
+  const fake = writeFakeAutopg({ port, postmaster });
+  const recipe = ephemeralHostRecipe({ shmAvailable: false, tmpDir: fake.dir, port });
+  mkdirSync(recipe.dataDir);
+  const marker = join(recipe.dataDir, "PG_VERSION");
+  writeFileSync(marker, "17\n");
+  return { port, fake, recipe, marker, lockPath: `${recipe.dataDir}.lock` };
+}
+
+function deadPid(): number {
+  const pid = spawnSync(process.execPath, ["-e", ""]).pid;
+  if (pid == null) throw new Error("no pid");
+  return pid;
+}
+
+test("startEphemeralHost prunes a dead leftover data dir and takes over a stale lock", async () => {
+  const { port, fake, recipe, marker, lockPath } = await ephemeralFixture("listen");
+  writeFileSync(join(recipe.dataDir, "postmaster.pid"), `${deadPid()}\n`);
+  writeFileSync(lockPath, String(deadPid()));
+
+  try {
+    expect((await startEphemeralHost(fake.bin, recipe)).port).toBe(port);
+    expect(existsSync(marker)).toBe(false);
+    expect(existsSync(lockPath)).toBe(false);
+    expect(calls(fake.log)).toEqual([recipe.postmasterArgs.join(" ")]);
+  } finally {
+    killPidFile(fake.pidFile);
+    rmSync(fake.dir, { recursive: true, force: true });
+  }
+});
+
+test("startEphemeralHost waits for a peer mid-initdb (cold-start lock, no postmaster.pid)", async () => {
+  const { port, fake, recipe, marker, lockPath } = await ephemeralFixture("fail");
+  writeFileSync(lockPath, String(process.pid));
+  const server = createServer();
+  const late = setTimeout(() => server.listen(port, "127.0.0.1"), 300);
+
+  try {
+    expect((await startEphemeralHost(fake.bin, recipe)).port).toBe(port);
+    expect(existsSync(marker)).toBe(true);
+    expect(existsSync(fake.log)).toBe(false);
+    expect(readFileSync(lockPath, "utf8")).toBe(String(process.pid));
+  } finally {
+    clearTimeout(late);
+    server.close();
+    rmSync(fake.dir, { recursive: true, force: true });
+  }
+});
+
+test("startEphemeralHost waits for a live data-dir owner instead of deleting its data", async () => {
+  const { port, fake, recipe, marker, lockPath } = await ephemeralFixture("fail");
+  writeFileSync(join(recipe.dataDir, "postmaster.pid"), `${process.pid}\n${recipe.dataDir}\n`);
+  const server = createServer();
+  const late = setTimeout(() => server.listen(port, "127.0.0.1"), 300);
+
+  try {
+    expect((await startEphemeralHost(fake.bin, recipe)).port).toBe(port);
+    expect(existsSync(marker)).toBe(true);
+    expect(existsSync(fake.log)).toBe(false);
+    expect(existsSync(lockPath)).toBe(false);
+  } finally {
+    clearTimeout(late);
+    server.close();
     rmSync(fake.dir, { recursive: true, force: true });
   }
 });
