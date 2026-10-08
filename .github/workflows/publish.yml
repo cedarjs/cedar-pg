@@ -1,16 +1,23 @@
 name: Publish
 
-# Stages @cedarjs/pg on npm. Not run automatically on push;
-# trigger via GitHub Release or workflow_dispatch when ready.
+# Release flow: merge a PR that bumps package.json "version" (with a matching
+# `## <version>` CHANGELOG section) into main. This workflow then:
+#   1. runs the gates and stages the npm publish,
+#   2. tags v<version> on the merged commit and creates the GitHub release
+#      (notes = that CHANGELOG section; prerelease when the version has `-`).
+# A maintainer still approves the staged publish from a trusted device (2FA):
+#   vp pm stage approve <stage-id>
+# A package.json push whose v<version> tag already exists (dependency bumps,
+# re-runs) does nothing. workflow_dispatch re-stages the current version by hand
+# and creates the tag/release only if they are missing.
 #
-# Auth: npm Trusted Publisher (OIDC). Configure the GitHub Actions
-# publisher for @cedarjs/pg on npmjs.com with allowed action
-# "npm stage publish" only. Do not set NPM_TOKEN.
-# After CI stages the package, a maintainer approves from a trusted
-# device (2FA): vp pm stage approve <stage-id>
+# Auth: npm Trusted Publisher (OIDC) bound to this workflow file name, allowed
+# action "npm stage publish" only. Do not rename this file; do not set NPM_TOKEN.
+# The release is created with GITHUB_TOKEN, so it does not trigger other workflows.
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
+    paths: [package.json]
   workflow_dispatch:
     inputs:
       tag:
@@ -18,14 +25,61 @@ on:
         required: false
         default: ""
 
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
 jobs:
-  publish:
+  resolve:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+      tagged: ${{ steps.release.outputs.tagged }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve version and release state
+        id: release
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          TAG="v${VERSION}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null; then
+            TAGGED=true
+          else
+            TAGGED=false
+          fi
+          {
+            echo "version=${VERSION}"
+            echo "tag=${TAG}"
+            echo "tagged=${TAGGED}"
+          } >>"$GITHUB_OUTPUT"
+          if [[ "$GITHUB_EVENT_NAME" == "push" && "$TAGGED" == "true" ]]; then
+            echo "${TAG} already exists: package.json changed without a version bump, nothing to publish."
+          fi
+
+  publish:
+    needs: resolve
+    if: github.event_name == 'workflow_dispatch' || needs.resolve.outputs.tagged == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
       id-token: write
     steps:
       - uses: actions/checkout@v6
+
+      # Fail before staging when the release notes would be empty.
+      - name: Extract CHANGELOG section
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          awk -v h="## ${VERSION}" '$0==h{f=1;next} f&&/^## /{exit} f' CHANGELOG.md >"${RUNNER_TEMP}/notes.md"
+          if ! grep -q '[^[:space:]]' "${RUNNER_TEMP}/notes.md"; then
+            echo "CHANGELOG.md has no '## ${VERSION}' section (or it is empty)" >&2
+            exit 1
+          fi
 
       - uses: voidzero-dev/setup-vp@v1
         with:
@@ -63,3 +117,18 @@ jobs:
 
           echo "Staging $VERSION with npm dist-tag $TAG"
           vp pm stage publish --access public --tag "$TAG" --provenance
+
+      - name: Tag and create GitHub release
+        if: needs.resolve.outputs.tagged == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          FLAGS=(--latest)
+          if [[ "$VERSION" == *-* ]]; then FLAGS=(--prerelease --latest=false); fi
+          gh release create "$TAG" \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --notes-file "${RUNNER_TEMP}/notes.md" \
+            "${FLAGS[@]}"
