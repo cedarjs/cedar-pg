@@ -119,6 +119,7 @@ Nx canonical consumer shape: one `db:ready` (`cedarpg run -- <migrate>` or `crea
 - Dual ESM/CJS + dts via `vp pack`; keep default export shapes stable for Jest CJS `require.resolve`.
 - `postinstall` must stay safe when scripts are disabled; document Action / `ci-install-autopg.sh` path for Yarn ignore-scripts consumers.
 - Changelog: user-visible API, CLI, env, and contract changes under `CHANGELOG.md` Unreleased (or the next release section).
+- Releasing: a release PR bumps `package.json` `version` and renames Unreleased to `## <version>` (empty `## Unreleased` stays above). Merging it to main runs `publish.yml`, which stages the npm publish, then tags `v<version>` and creates the GitHub release from that CHANGELOG section. A maintainer approves the stage with 2FA. Do not tag or create releases by hand, and do not rename `publish.yml` (npm Trusted Publisher is bound to it).
 
 ---
 

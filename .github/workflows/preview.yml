@@ -3,7 +3,7 @@ name: Preview
 # Per-commit preview builds via pkg.pr.new (not the npm registry, no 2FA).
 # Requires the pkg.pr.new GitHub App on this repo: https://github.com/apps/pkg-pr-new
 # Install: npm i https://pkg.pr.new/@cedarjs/pg@<sha>   (or @<pr-number>)
-# Real releases still go through publish.yml (staged + 2FA approve).
+# Real releases go through publish.yml (version bump on main → staged + 2FA approve).
 on:
   push:
     branches: [main]
