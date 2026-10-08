@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { constants } from "node:os";
 
 export type RunAttachedOptions = {
   cwd?: string;
@@ -6,7 +7,12 @@ export type RunAttachedOptions = {
   shell?: boolean;
 };
 
-/** Attached child: inherit stdio, resolve with exit code (signal → 1). */
+const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+
+/**
+ * Attached child: inherit stdio, forward SIGINT / SIGTERM / SIGHUP to the
+ * child while it runs, resolve with its exit code (killed by signal → 128 + n).
+ */
 export function runAttached(
   command: string,
   args: string[],
@@ -19,9 +25,18 @@ export function runAttached(
       env: options.env,
       shell: options.shell,
     });
-    child.once("error", reject);
+    const forward = (signal: NodeJS.Signals) => child.kill(signal);
+    for (const signal of FORWARDED_SIGNALS) process.on(signal, forward);
+    const detach = () => {
+      for (const signal of FORWARDED_SIGNALS) process.off(signal, forward);
+    };
+    child.once("error", (error) => {
+      detach();
+      reject(error);
+    });
     child.once("exit", (code, signal) => {
-      resolve(signal ? 1 : (code ?? 1));
+      detach();
+      resolve(signal ? 128 + constants.signals[signal] : (code ?? 1));
     });
   });
 }
