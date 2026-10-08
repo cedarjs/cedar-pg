@@ -53,8 +53,9 @@ export type AcquireOptions = {
   /**
    * Start from an empty database (default false): first DROP every database
    * owned by this worktree's role for `mode` — the leased DB, TEMPLATE clones,
-   * crashed-run leftovers — then create it again. Scoped by the derived role
-   * name, so it works without a lease file and never touches other worktrees.
+   * crashed-run leftovers — then create it again. Scoped by the role (the
+   * lease's when it is for this database, else the derived name), so it works
+   * without a lease file and never touches other worktrees.
    */
   fresh?: boolean;
 };
@@ -84,7 +85,12 @@ export async function acquire(options: AcquireOptions): Promise<AcquireResult> {
   const identity = resolveWorktreeIdentity(options.root);
   const mode = options.mode;
   const databaseName = buildDatabaseName(identity, mode);
-  const roleName = buildRoleName(databaseName);
+  // A lease for this database pins its role: objects inside belong to that role,
+  // and handing the DB to a newly derived name (naming changed for long names in
+  // 0.2.0-beta.2) would leave the app without access to its own tables.
+  const leased = readLease(identity.root, mode);
+  const roleName =
+    leased?.databaseName === databaseName ? leased.roleName : buildRoleName(databaseName);
 
   const host = await ensureHostRunning();
   if (options.fresh) {
