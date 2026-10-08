@@ -2,11 +2,13 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import {
   closeSync,
   existsSync,
+  linkSync,
   mkdirSync,
   openSync,
   readFileSync,
   rmSync,
   statfsSync,
+  writeFileSync,
 } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
@@ -236,9 +238,14 @@ function errorDetail(err: unknown): string {
  * concurrent acquire) already holds the data dir — wait for it, never compete.
  */
 function liveDataDirOwner(dataDir: string): number | null {
+  return livePidIn(join(dataDir, "postmaster.pid"));
+}
+
+/** Live PID from the first line of `file`, else `null` (missing, garbage, or dead). */
+function livePidIn(file: string): number | null {
   let pid: number;
   try {
-    pid = Number.parseInt(readFileSync(join(dataDir, "postmaster.pid"), "utf8"), 10);
+    pid = Number.parseInt(readFileSync(file, "utf8"), 10);
   } catch {
     return null;
   }
@@ -248,6 +255,35 @@ function liveDataDirOwner(dataDir: string): number | null {
     return pid;
   } catch (err) {
     return (err as NodeJS.ErrnoException).code === "EPERM" ? pid : null;
+  }
+}
+
+/**
+ * Exclusive cold-start lock `<dataDir>.lock` holding our PID. Returns `null` once
+ * we hold it, else the live holder's PID. `postmaster.pid` alone cannot guard an
+ * ephemeral cold start: it does not exist yet while a peer runs initdb, which is
+ * exactly when a second `rm -rf` would destroy the peer's cluster.
+ *
+ * The PID is written to a private file and hard-linked into place, so the lock
+ * never exists without its PID. A dead holder's lock is stale and taken over.
+ */
+function tryColdStartLock(lockPath: string): number | null {
+  const mine = `${lockPath}.${process.pid}`;
+  writeFileSync(mine, String(process.pid));
+  try {
+    for (;;) {
+      try {
+        linkSync(mine, lockPath);
+        return null;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      }
+      const holder = livePidIn(lockPath);
+      if (holder != null) return holder;
+      rmSync(lockPath, { force: true });
+    }
+  } finally {
+    rmSync(mine, { force: true });
   }
 }
 
@@ -409,14 +445,53 @@ async function startLocalHost(
  *
  * Never runs `autopg install` — that rewrites `~/.autopg/admin.json` and fails
  * with `supervisor mismatch` next to a local pm2 install. Reuses a listener
- * already on the recipe port, and prunes stale RAM dirs before a cold start.
+ * already on the recipe port. Concurrent cold starts (Nx running several
+ * `db:ready` on one runner) serialize on {@link tryColdStartLock}: only the
+ * holder prunes and starts; everyone else waits for the listener.
  */
-async function startEphemeralHost(bin: string): Promise<AutopgDiscovery> {
-  const recipe = ephemeralHostRecipe();
-  if (await canConnect(recipe.port)) return discoveryFromRecipe(bin, recipe);
+export async function startEphemeralHost(
+  bin: string,
+  recipe: EphemeralHostRecipe = ephemeralHostRecipe(),
+): Promise<AutopgDiscovery> {
+  const { dataDir, port } = recipe;
+  if (await canConnect(port)) return discoveryFromRecipe(bin, recipe);
 
   const useRamShm = recipe.postmasterArgs.includes("--ram");
-  // Nothing listens on the recipe port, so its data dir is a dead run's leftover.
+  const lockPath = `${dataDir}.lock`;
+  const holder = tryColdStartLock(lockPath);
+  if (holder == null) {
+    try {
+      // Re-check under the lock: a peer may have finished starting meanwhile.
+      if (!(await canConnect(port)) && liveDataDirOwner(dataDir) == null) {
+        await coldStartEphemeral(bin, recipe, useRamShm);
+      }
+    } finally {
+      rmSync(lockPath, { force: true });
+    }
+  }
+
+  if (await waitForListener({ port, readyMs: HOST_READY_MS })) {
+    return discoveryFromRecipe(bin, recipe);
+  }
+  const owner =
+    holder != null
+      ? `cold start pid ${holder}`
+      : `postmaster pid ${liveDataDirOwner(dataDir) ?? "?"}`;
+  throw new Error(
+    formatHostStartError(
+      `${owner} owns ${dataDir} but did not accept 127.0.0.1:${port} within ${HOST_READY_MS}ms`,
+      useRamShm,
+    ),
+  );
+}
+
+/** Prune our dead leftover data dir and start the postmaster. Caller holds the cold-start lock. */
+async function coldStartEphemeral(
+  bin: string,
+  recipe: EphemeralHostRecipe,
+  useRamShm: boolean,
+): Promise<void> {
+  // Locked, no listener, no live postmaster.pid: the data dir is a dead run's leftover.
   // Only this cedar-pg-owned path: `/dev/shm/PostgreSQL.*` / `pgserve-*` belong to
   // every Postgres on the machine (the registered host included) and are never touched.
   rmSync(recipe.dataDir, { recursive: true, force: true });
@@ -442,10 +517,10 @@ async function startEphemeralHost(bin: string): Promise<AutopgDiscovery> {
       readyMs: HOST_READY_MS,
     });
   } catch (err) {
+    // A lockless starter (older cedar-pg) won the data dir → caller waits for it.
+    if (liveDataDirOwner(recipe.dataDir) != null) return;
     throw new Error(formatHostStartError(errorDetail(err), useRamShm));
   }
-
-  return discoveryFromRecipe(bin, recipe);
 }
 
 let autopgVersionChecked = false;
