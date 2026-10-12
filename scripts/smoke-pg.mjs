@@ -3,7 +3,7 @@
  * Adapter + real Postgres smoke: pack → install tarball in a temp consumer →
  * run Vitest, Jest (stock + multi-file TEMPLATE), and the CLI through @cedarjs/pg.
  *
- * Sets CI=true + CEDAR_PG_EPHEMERAL_HOST=1 so policy starts an owned ephemeral
+ * Sets CI=true + defaults CEDAR_PG_EPHEMERAL_HOST=1 so policy starts an owned ephemeral
  * postmaster when nothing is listening — what empty CI runners exercise (the
  * workflow installs the binary only, via ci-install-autopg.sh). Attach still
  * wins if a host is already live.
@@ -35,7 +35,7 @@ const tmp = installConsumer({
     private: true,
     type: "module",
   },
-  npmPackages: ["vitest@4.1.9", "jest@29.7.0", "pg@8.16.3"],
+  npmPackages: ["vitest@4.1.9", "jest@29.7.0", "pg@8.16.3", "prisma@7.0.0"],
 });
 
 cpSync(FIXTURES, tmp, { recursive: true });
@@ -49,9 +49,15 @@ const pathEnv = ensureAutopgBinary(process.env);
 const smokeEnv = {
   ...pathEnv,
   CI: "true",
-  CEDAR_PG_EPHEMERAL_HOST: "1",
+  CEDAR_PG_EPHEMERAL_HOST: process.env.CEDAR_PG_EPHEMERAL_HOST ?? "1",
 };
-for (const key of ["DATABASE_URL", "TEST_DATABASE_URL", "CEDAR_PG", "CEDAR_PG_FORCE"]) {
+for (const key of [
+  "DATABASE_URL",
+  "TEST_DATABASE_URL",
+  "SHADOW_DATABASE_URL",
+  "CEDAR_PG",
+  "CEDAR_PG_FORCE",
+]) {
   delete smokeEnv[key];
 }
 
@@ -103,5 +109,8 @@ if (orphanAttach.status === 0 || !/no test lease/.test(orphanAttach.stderr)) {
   process.stderr.write(orphanAttach.stderr ?? "");
   throw new Error("cedarpg run --attach without a lease must fail with 'no test lease'");
 }
+
+console.log("==> dev shadow database + Prisma migrate dev");
+run("node", ["dev-shadow.mjs"], { cwd: tmp, env: smokeEnv });
 
 console.log("smoke-pg: PASS");

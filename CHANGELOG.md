@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Dev leases provision a dedicated role-owned Prisma shadow database on the same admin connection as the main database, with length-safe naming. `AcquireResult.shadowDatabaseUrl`, `cedarpg acquire --json` / `--print-env`, `cedarpg run` / `run --attach`, `.cedarpg/dev.env`, and the dev env loaders expose its URL as `SHADOW_DATABASE_URL`. Opt in with `shadowDatabaseUrl: process.env.SHADOW_DATABASE_URL` in your Prisma config to run `migrate dev` without granting `CREATEDB`. Re-acquire existing dev leases once after upgrading; dispose, fresh acquisition, and orphan GC clean up both databases. Test leases are unchanged.
+
 ## 0.3.0
 
 First release off the `beta` dist-tag: `npm install @cedarjs/pg` now installs it as a normal 0.x release (`latest`). Public APIs may still change before 1.0. This is a 0.x minor bump because role / clone naming for long worktree names and `cedarpg run` exit codes on signals change (see below).

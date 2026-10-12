@@ -264,11 +264,13 @@ export function rolePasswordFor(roleName: string): string {
 }
 
 /**
- * Idempotently CREATE ROLE + CREATE DATABASE with cedar-pg owned names.
+ * Idempotently provision a role and its databases on one admin connection.
+ * CREATE DATABASE cannot be transactional: if a later creation fails, the
+ * successful databases remain and the next acquire reuses them.
  */
-export async function ensureDatabase(opts: {
+export async function ensureDatabases(opts: {
   adminUrl: string;
-  databaseName: string;
+  databaseNames: string[];
   roleName: string;
   password?: string;
 }): Promise<void> {
@@ -287,17 +289,19 @@ export async function ensureDatabase(opts: {
       );
     }
 
-    const dbExists = await client.query("SELECT 1 FROM pg_database WHERE datname = $1", [
-      opts.databaseName,
-    ]);
-    if (dbExists.rowCount === 0) {
-      await client.query(
-        `CREATE DATABASE ${quoteIdent(opts.databaseName)} OWNER ${quoteIdent(opts.roleName)}`,
-      );
-    } else {
-      await client.query(
-        `ALTER DATABASE ${quoteIdent(opts.databaseName)} OWNER TO ${quoteIdent(opts.roleName)}`,
-      );
+    for (const databaseName of opts.databaseNames) {
+      const dbExists = await client.query("SELECT 1 FROM pg_database WHERE datname = $1", [
+        databaseName,
+      ]);
+      if (dbExists.rowCount === 0) {
+        await client.query(
+          `CREATE DATABASE ${quoteIdent(databaseName)} OWNER ${quoteIdent(opts.roleName)}`,
+        );
+      } else {
+        await client.query(
+          `ALTER DATABASE ${quoteIdent(databaseName)} OWNER TO ${quoteIdent(opts.roleName)}`,
+        );
+      }
     }
   });
 }

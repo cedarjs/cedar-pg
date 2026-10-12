@@ -25,7 +25,8 @@ Modes:
   test  Drop DB on dispose / test teardown
 
 run:
-  Acquire, set DATABASE_URL (+ TEST_DATABASE_URL in test) on the child, exec <cmd…>.
+  Acquire, set DATABASE_URL (+ SHADOW_DATABASE_URL in dev, TEST_DATABASE_URL in test)
+  on the child, exec <cmd…>.
   --force sets CEDAR_PG_FORCE (escape hatch); child env overwrite is always on.
   --attach reads the existing lease instead: no acquire, no role/DB DDL, fails
   when there is no lease or the host is not listening. Use it for children that
@@ -177,6 +178,9 @@ async function main(): Promise<number> {
       });
       if (args.printEnv) {
         process.stdout.write(`DATABASE_URL=${result.databaseUrl}\n`);
+        if (result.shadowDatabaseUrl) {
+          process.stdout.write(`SHADOW_DATABASE_URL=${result.shadowDatabaseUrl}\n`);
+        }
         if (mode === "test") {
           process.stdout.write(`TEST_DATABASE_URL=${result.databaseUrl}\n`);
         }
@@ -186,6 +190,7 @@ async function main(): Promise<number> {
           `${JSON.stringify(
             {
               databaseUrl: result.databaseUrl,
+              shadowDatabaseUrl: result.shadowDatabaseUrl,
               adminUrl: result.adminUrl,
               databaseName: result.databaseName,
               roleName: result.roleName,
@@ -212,7 +217,7 @@ async function main(): Promise<number> {
     if (args.cmd === "run") {
       if (args.force) process.env.CEDAR_PG_FORCE = "1";
       const mode = args.mode ?? "dev";
-      const { databaseUrl } = args.attach
+      const { databaseUrl, shadowDatabaseUrl } = args.attach
         ? await attach({ root: args.root, mode })
         : await acquire({ root: args.root, mode, setEnv: true });
       const childEnv: NodeJS.ProcessEnv = {
@@ -220,6 +225,7 @@ async function main(): Promise<number> {
         DATABASE_URL: databaseUrl,
       };
       if (mode === "test") childEnv.TEST_DATABASE_URL = databaseUrl;
+      if (shadowDatabaseUrl) childEnv.SHADOW_DATABASE_URL = shadowDatabaseUrl;
       return await runChild(args.child ?? [], childEnv);
     }
 

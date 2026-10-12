@@ -1,6 +1,11 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { CLI_NAME } from "./constants.ts";
-import { buildDatabaseName, buildRoleName, type DbMode } from "./naming.ts";
+import {
+  buildDatabaseName,
+  buildRoleName,
+  buildShadowDatabaseName,
+  type DbMode,
+} from "./naming.ts";
 import {
   envPath,
   forgetLease,
@@ -13,13 +18,18 @@ import {
 } from "./lease.ts";
 import { applyDatabaseUrlEnv, runIfNeeded, type ResolveAcquireSkipInput } from "./policy.ts";
 import { resolveRoot, resolveWorktreeIdentity } from "./worktree.ts";
-import { buildDatabaseUrl, dropDatabasesOwnedByRole, ensureDatabase } from "../providers/autopg.ts";
+import {
+  buildDatabaseUrl,
+  dropDatabasesOwnedByRole,
+  ensureDatabases,
+} from "../providers/autopg.ts";
 import { ensureHostRunning, waitForListener } from "../providers/host.ts";
 
-function writeEnvFile(root: string, mode: DbMode, databaseUrl: string): void {
+function writeEnvFile(root: string, mode: DbMode, urls: DatabaseUrls): void {
   mkdirSync(leaseDir(root), { recursive: true, mode: 0o700 });
-  let body = `DATABASE_URL=${databaseUrl}\n`;
-  if (mode === "test") body += `TEST_DATABASE_URL=${databaseUrl}\n`;
+  let body = `DATABASE_URL=${urls.databaseUrl}\n`;
+  if (mode === "test") body += `TEST_DATABASE_URL=${urls.databaseUrl}\n`;
+  if (urls.shadowDatabaseUrl) body += `SHADOW_DATABASE_URL=${urls.shadowDatabaseUrl}\n`;
   writeFileSync(envPath(root, mode), body, { mode: 0o600 });
 }
 
@@ -29,6 +39,26 @@ export function urlFromLease(lease: Lease): string {
     databaseName: lease.databaseName,
     roleName: lease.roleName,
   });
+}
+
+type DatabaseUrls = {
+  databaseUrl: string;
+  /** Dedicated Prisma shadow database URL for dev leases; absent in test mode. */
+  shadowDatabaseUrl?: string;
+};
+
+function urlsFromLease(lease: Lease): DatabaseUrls {
+  return {
+    databaseUrl: urlFromLease(lease),
+    ...(lease.mode === "dev"
+      ? {
+          shadowDatabaseUrl: buildDatabaseUrl({
+            ...lease,
+            databaseName: buildShadowDatabaseName(lease.databaseName),
+          }),
+        }
+      : {}),
+  };
 }
 
 /**
@@ -48,7 +78,7 @@ async function dropThenForget(lease: Lease, adminUrl: string): Promise<string[]>
 export type AcquireOptions = {
   root?: string;
   mode: DbMode;
-  /** Inject DATABASE_URL / TEST_DATABASE_URL into process.env (default true). */
+  /** Inject the mode's database URLs into process.env (default true). */
   setEnv?: boolean;
   /**
    * Start from an empty database (default false): first DROP every database
@@ -60,8 +90,7 @@ export type AcquireOptions = {
   fresh?: boolean;
 };
 
-export type AcquireResult = {
-  databaseUrl: string;
+export type AcquireResult = DatabaseUrls & {
   /** Superuser URL for privileged DDL (mark template, CREATE DATABASE … TEMPLATE). */
   adminUrl: string;
   databaseName: string;
@@ -100,15 +129,10 @@ export async function acquire(options: AcquireOptions): Promise<AcquireResult> {
       preferLast: databaseName,
     });
   }
-  await ensureDatabase({
+  await ensureDatabases({
     adminUrl: host.adminUrl,
-    databaseName,
-    roleName,
-  });
-
-  const databaseUrl = buildDatabaseUrl({
-    port: host.port,
-    databaseName,
+    databaseNames:
+      mode === "dev" ? [databaseName, buildShadowDatabaseName(databaseName)] : [databaseName],
     roleName,
   });
 
@@ -126,10 +150,11 @@ export async function acquire(options: AcquireOptions): Promise<AcquireResult> {
     createdAt: new Date().toISOString(),
   };
   writeLease(lease);
-  writeEnvFile(identity.root, mode, databaseUrl);
+  const urls = urlsFromLease(lease);
+  writeEnvFile(identity.root, mode, urls);
 
   if (options.setEnv !== false) {
-    applyDatabaseUrlEnv(databaseUrl, { mode });
+    applyDatabaseUrlEnv(urls.databaseUrl, { mode, shadowDatabaseUrl: urls.shadowDatabaseUrl });
   }
 
   const disposeFn = async () => {
@@ -137,7 +162,7 @@ export async function acquire(options: AcquireOptions): Promise<AcquireResult> {
   };
 
   return {
-    databaseUrl,
+    ...urls,
     adminUrl: host.adminUrl,
     databaseName,
     roleName,
@@ -160,7 +185,7 @@ export async function acquire(options: AcquireOptions): Promise<AcquireResult> {
 export async function attach(options: {
   root?: string;
   mode: DbMode;
-}): Promise<{ lease: Lease; databaseUrl: string }> {
+}): Promise<{ lease: Lease } & DatabaseUrls> {
   const root = resolveRoot(options.root);
   const { mode } = options;
   const lease = readLease(root, mode);
@@ -176,7 +201,7 @@ export async function attach(options: {
         `listening; re-run \`${CLI_NAME} acquire --mode=${mode}\` to bring the host back`,
     );
   }
-  return { lease, databaseUrl: urlFromLease(lease) };
+  return { lease, ...urlsFromLease(lease) };
 }
 
 export type AcquireIfNeededOptions = AcquireOptions & ResolveAcquireSkipInput;

@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readLease, writeLease, type Lease } from "../src/core/lease.ts";
-import { buildDatabaseName, buildRoleName } from "../src/core/naming.ts";
+import { envPath, readLease, writeLease, type Lease } from "../src/core/lease.ts";
+import { buildDatabaseName, buildRoleName, buildShadowDatabaseName } from "../src/core/naming.ts";
 import { resolveWorktreeIdentity } from "../src/core/worktree.ts";
 
 let registry: string;
@@ -37,13 +37,14 @@ beforeEach(() => {
     );
     return {
       ...actual,
-      ensureDatabase: vi.fn(async () => {}),
+      ensureDatabases: vi.fn(async () => {}),
       dropDatabasesOwnedByRole: vi.fn(async () => []),
     };
   });
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.doUnmock("../src/providers/host.ts");
   vi.doUnmock("../src/providers/autopg.ts");
   vi.resetModules();
@@ -85,8 +86,11 @@ test("acquire keeps the lease's role for the same database (pre-#44 cut role sur
 
   expect(result.roleName).toBe(oldRole);
   expect(result.databaseUrl).toContain(`${oldRole}:`);
-  expect(autopg.ensureDatabase).toHaveBeenCalledWith(
-    expect.objectContaining({ databaseName, roleName: oldRole }),
+  expect(autopg.ensureDatabases).toHaveBeenCalledWith(
+    expect.objectContaining({
+      databaseNames: [databaseName, buildShadowDatabaseName(databaseName)],
+      roleName: oldRole,
+    }),
   );
   expect(autopg.dropDatabasesOwnedByRole).toHaveBeenCalledWith(
     expect.objectContaining({ roleName: oldRole }),
@@ -104,8 +108,11 @@ test("acquire derives the role when the lease is for a different database", asyn
 
   expect(result.databaseName).toBe(databaseName);
   expect(result.roleName).toBe(buildRoleName(databaseName));
-  expect(autopg.ensureDatabase).toHaveBeenCalledWith(
-    expect.objectContaining({ databaseName, roleName: buildRoleName(databaseName) }),
+  expect(autopg.ensureDatabases).toHaveBeenCalledWith(
+    expect.objectContaining({
+      databaseNames: [databaseName, buildShadowDatabaseName(databaseName)],
+      roleName: buildRoleName(databaseName),
+    }),
   );
   expect(readLease(root, "dev")?.roleName).toBe(buildRoleName(databaseName));
 });
@@ -117,4 +124,44 @@ test("acquire derives the role without a lease", async () => {
   const result = await acquire({ root, mode: "dev", setEnv: false });
 
   expect(result.roleName).toBe(buildRoleName(databaseName));
+});
+
+test("dev acquire provisions a shadow with the leased credentials and writes both URLs", async () => {
+  vi.stubEnv("DATABASE_URL", "ambient-main");
+  vi.stubEnv("SHADOW_DATABASE_URL", "ambient-shadow");
+  const { acquire } = await import("../src/core/lifecycle.ts");
+  const result = await acquire({ root, mode: "dev" });
+  const main = new URL(result.databaseUrl);
+  const shadow = new URL(result.shadowDatabaseUrl!);
+  expect(shadow.pathname).toBe(`/${buildShadowDatabaseName(result.databaseName)}`);
+  expect(shadow.username).toBe(main.username);
+  expect(shadow.password).toBe(main.password);
+  expect(process.env.DATABASE_URL).toBe(result.databaseUrl);
+  expect(process.env.SHADOW_DATABASE_URL).toBe(result.shadowDatabaseUrl);
+  expect(readFileSync(envPath(root, "dev"), "utf8")).toBe(
+    `DATABASE_URL=${result.databaseUrl}\nSHADOW_DATABASE_URL=${result.shadowDatabaseUrl}\n`,
+  );
+});
+
+test("setEnv false leaves both ambient URLs alone while provisioning dev", async () => {
+  vi.stubEnv("DATABASE_URL", "ambient-main");
+  vi.stubEnv("SHADOW_DATABASE_URL", "ambient-shadow");
+  const { acquire } = await import("../src/core/lifecycle.ts");
+  const result = await acquire({ root, mode: "dev", setEnv: false });
+  expect(result.shadowDatabaseUrl).toBeDefined();
+  expect(process.env.DATABASE_URL).toBe("ambient-main");
+  expect(process.env.SHADOW_DATABASE_URL).toBe("ambient-shadow");
+});
+
+test("test acquire provisions only the main database and writes no shadow URL", async () => {
+  const { acquire } = await import("../src/core/lifecycle.ts");
+  const autopg = await import("../src/providers/autopg.ts");
+  const result = await acquire({ root, mode: "test", setEnv: false });
+  expect(result.shadowDatabaseUrl).toBeUndefined();
+  expect(autopg.ensureDatabases).toHaveBeenCalledWith(
+    expect.objectContaining({ databaseNames: [result.databaseName] }),
+  );
+  expect(readFileSync(envPath(root, "test"), "utf8")).toBe(
+    `DATABASE_URL=${result.databaseUrl}\nTEST_DATABASE_URL=${result.databaseUrl}\n`,
+  );
 });

@@ -82,9 +82,30 @@ cedarpg gc                         # drop DBs whose worktree root is gone
 
 `status` and `studio` are read-only. They do not acquire. `studio` walks from cwd up to the worktree.
 
-`cedarpg run` acquires (idempotent role and database DDL), then execs the command. The child always gets `DATABASE_URL` from the lease. In test mode it also gets `TEST_DATABASE_URL`. `--force` only sets `CEDAR_PG_FORCE=1`, so nested adapters do not treat an ambient URL as an escape hatch.
+`cedarpg run` acquires (idempotent role and database DDL), then execs the command. The child always gets `DATABASE_URL` from the lease, plus `SHADOW_DATABASE_URL` in dev mode or `TEST_DATABASE_URL` in test mode. `--attach` passes the same URLs from an existing lease. `--force` only sets `CEDAR_PG_FORCE=1`, so nested adapters do not treat an ambient URL as an escape hatch.
 
 `cedarpg run --attach` skips the acquire. It reads the lease a prior `acquire` / `run` wrote, sets the same child env, and execs. It never runs DDL and never starts or revives the host. It fails (nonzero, before the child starts) when there is no lease or nothing is listening on the leased port.
+
+### Prisma migrations in dev
+
+Dev acquisition also provisions a dedicated `<databaseName>_shadow` database, shortening the readable name when needed to preserve the worktree hash within Postgres's 63-character limit. It uses the same lease role and password; the role does not need `CREATEDB`. Both URLs are written to `.cedarpg/dev.env`, so `loadDevEnv` and `@cedarjs/pg/dev-env` load the shadow URL too.
+
+Add `shadowDatabaseUrl: process.env.SHADOW_DATABASE_URL` to your `prisma.config.ts` datasource:
+
+```ts
+datasource: {
+  url: env("DATABASE_URL"),
+  shadowDatabaseUrl: process.env.SHADOW_DATABASE_URL,
+},
+```
+
+Use `process.env` for the shadow URL so production commands can load the config when the variable is absent. Prisma's [shadow database configuration](https://www.prisma.io/docs/orm/prisma-migrate/understanding-prisma-migrate/shadow-database) lets `migrate dev` use this database instead of trying to create one:
+
+```bash
+cedarpg run --mode=dev -- prisma migrate dev --create-only
+```
+
+Re-acquire an existing dev lease once after upgrading to provision its shadow and refresh `dev.env`; `--attach` only reads a lease. Re-acquiring preserves both databases. `acquire({ fresh: true })`, `dispose({ mode: "dev" })`, and orphan GC drop both through role ownership. Test leases do not provision a shadow database.
 
 If two targets run `cedarpg acquire` or plain `cedarpg run` on the same worktree, role and database DDL can race. Acquire once, then wrap children with `run --attach`. Any number of those can run concurrently.
 
@@ -426,6 +447,7 @@ Yarn Berry or ignore-scripts, when you cannot use the Action. Requires a real `n
 | `AUTOPG_PG_USER`, `AUTOPG_PG_PASSWORD` | Autopg superuser for admin URL (default user `postgres`, password `postgres`)                                                                                                                        |
 | `CEDAR_PG=0`                           | Disable auto-acquire in adapters                                                                                                                                                                     |
 | `TEST_DATABASE_URL`                    | Default escape hatch for `acquireIfNeeded`. Skip acquire for a real external DB (not `cpg_*`, `file:`, or `{...}` or `<...>` placeholders). Callers may pass `url` (`DATABASE_URL` is common in dev) |
+| `SHADOW_DATABASE_URL`                  | Dedicated Prisma shadow database for managed dev leases; set by acquire, run / attach, and the dev env loaders                                                                                       |
 | `CEDAR_PG_FORCE=1`                     | Ignore the external-URL escape hatch (adapters, `cedarpg run --force`)                                                                                                                               |
 | `CEDAR_PG_EPHEMERAL_HOST`              | `1` owned postmaster. `0` never own one (even in CI). Unset and `CI=true` means ephemeral                                                                                                            |
 | `CEDAR_PG_REGISTRY_DIR`                | Override the global lease registry (for `gc`)                                                                                                                                                        |
@@ -444,6 +466,8 @@ await dispose();
 
 loadDevEnv({ overwrite: true }); // override .env DATABASE_URL from .cedarpg/dev.env
 ```
+
+Dev `AcquireResult` also includes `shadowDatabaseUrl`; it is absent in test mode.
 
 Unit tests in this repo do not start Postgres. CI runs `vp run smoke:pg` for Vitest and Jest adapters against real Postgres (ephemeral cold-start when the runner has no live host; attach wins otherwise).
 
@@ -464,6 +488,7 @@ vp run smoke:pg    # pack, then Vitest and Jest adapters against real ephemeral 
 
 | Symptom                                                                                 | Fix                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Prisma `migrate dev` fails with `P3014` / permission denied to create database          | Re-acquire the dev lease after upgrading, then add `shadowDatabaseUrl: process.env.SHADOW_DATABASE_URL` to `prisma.config.ts` and run through `cedarpg run --mode=dev`. See [Prisma migrations in dev](#prisma-migrations-in-dev).                                                                                                                                                                                                                                            |
 | `ECONNREFUSED 127.0.0.1:25432` on `cedarpg acquire`                                     | autopg is registered but not listening. cedar-pg attaches only after TCP accepts. It runs `autopg restart`, then detached `autopg postmaster` on the registered port/data if still dark — including when pm2 is missing and `restart` exits 1. A revived postmaster logs to `~/.autopg/logs/cedarpg-postmaster.log`. `status=stopped` with `runtime.live=true` is healthy once TCP accepts; cedar-pg will not `install` pm2. If revive fails, the error lists what was tried. |
 | `database already exists: ..._c_<workerId>` in Jest                                     | Upgrade `@cedarjs/pg`. Older releases cached the clone on `globalThis`, which Jest resets for every test file. `cloneWorkerDatabase` now reuses the worker's clone from Postgres (`reuse: true`), and template setup drops crashed-run leftovers first. If the error says `owned by <other role>`, a database outside this worktree's lease has that name: drop it or pass another `name`.                                                                                    |
 | Acquire skipped. Tests hit shared or stale Postgres                                     | A real `.env` `TEST_DATABASE_URL` (or a `url` the caller passed) trips the escape hatch. Set `CEDAR_PG_FORCE=1` once in `jest.config.js`, or `force: true`, or `cedarpg run --force`.                                                                                                                                                                                                                                                                                         |
