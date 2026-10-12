@@ -73,6 +73,11 @@ export function buildRoleName(databaseName: string): string {
   return appendKeepingHash(databaseName, "_role");
 }
 
+/** Dev shadow datname, preserving mode + hash within Postgres's 63-char limit. */
+export function buildShadowDatabaseName(databaseName: string): string {
+  return appendKeepingHash(databaseName, "_shadow");
+}
+
 /**
  * Build a worker clone datname from a TEMPLATE database name.
  * Layout: `<template>_c_<suffix>`, cut by `appendKeepingHash` (keeps mode, hash, and suffix).

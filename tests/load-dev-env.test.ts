@@ -14,6 +14,7 @@ afterEach(() => {
   }
   delete process.env.DATABASE_URL;
   delete process.env.TEST_DATABASE_URL;
+  delete process.env.SHADOW_DATABASE_URL;
 });
 
 function writeLiveArtifacts(root: string, mode: "dev" | "test", envBody: string): void {
@@ -87,4 +88,25 @@ test("loadDevEnv no-ops without a matching lease", () => {
 
   loadDevEnv({ root, overwrite: true });
   expect(process.env.DATABASE_URL).toBeUndefined();
+});
+
+test("loadDevEnv fills or overwrites SHADOW_DATABASE_URL with the same policy as DATABASE_URL", () => {
+  const root = mkdtempSync(join(tmpdir(), "cedar-pg-dev-shadow-env-"));
+  dirs.push(root);
+  const main = "postgresql://u:p@127.0.0.1:1/cpg_dev";
+  const shadow = `${main}_shadow`;
+  writeLiveArtifacts(root, "dev", `DATABASE_URL=${main}\nSHADOW_DATABASE_URL=${shadow}\n`);
+  delete process.env.DATABASE_URL;
+  delete process.env.SHADOW_DATABASE_URL;
+  loadDevEnv(root);
+  expect(process.env.DATABASE_URL).toBe(main);
+  expect(process.env.SHADOW_DATABASE_URL).toBe(shadow);
+  process.env.DATABASE_URL = "ambient-main";
+  process.env.SHADOW_DATABASE_URL = "ambient-shadow";
+  loadDevEnv(root);
+  expect(process.env.DATABASE_URL).toBe("ambient-main");
+  expect(process.env.SHADOW_DATABASE_URL).toBe("ambient-shadow");
+  loadDevEnv({ root, overwrite: true });
+  expect(process.env.DATABASE_URL).toBe(main);
+  expect(process.env.SHADOW_DATABASE_URL).toBe(shadow);
 });

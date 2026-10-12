@@ -63,7 +63,7 @@ test("acquire returns adminUrl alongside databaseUrl", async () => {
   const adminUrl = "postgresql://postgres:postgres@127.0.0.1:5433/postgres";
 
   try {
-    await withHostAndAutopgMocks(adminUrl, { ensureDatabase: vi.fn(async () => {}) }, async () => {
+    await withHostAndAutopgMocks(adminUrl, { ensureDatabases: vi.fn(async () => {}) }, async () => {
       const { acquire } = await import("../src/core/lifecycle.ts");
       const result = await acquire({ root, mode: "test", setEnv: false });
       expect(result.adminUrl).toBe(adminUrl);
@@ -514,7 +514,7 @@ test("acquire({ fresh }) drops the role's leftovers before CREATE; default does 
   try {
     await withHostAndAutopgMocks(
       adminUrl,
-      { dropDatabasesOwnedByRole: dropOwned, ensureDatabase: ensureDb },
+      { dropDatabasesOwnedByRole: dropOwned, ensureDatabases: ensureDb },
       async () => {
         const { acquire } = await import("../src/core/lifecycle.ts");
         await acquire({ root, mode: "test", setEnv: false });

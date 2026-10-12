@@ -20,16 +20,18 @@ export type ResolveAcquireSkipInput = {
 };
 
 /**
- * Inject DATABASE_URL (and TEST_DATABASE_URL for test mode) from a resolved URL.
+ * Inject DATABASE_URL, TEST_DATABASE_URL in test, and a supplied dev shadow URL.
  * Single env path for acquire, clone, and external-url skip.
  */
 export function applyDatabaseUrlEnv(
   databaseUrl: string,
-  options: { mode?: "dev" | "test" } = {},
+  options: { mode?: "dev" | "test"; shadowDatabaseUrl?: string } = {},
 ): void {
   process.env.DATABASE_URL = databaseUrl;
   if ((options.mode ?? "test") === "test") {
     process.env.TEST_DATABASE_URL = databaseUrl;
+  } else if (options.shadowDatabaseUrl !== undefined) {
+    process.env.SHADOW_DATABASE_URL = options.shadowDatabaseUrl;
   }
 }
 

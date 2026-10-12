@@ -1,5 +1,10 @@
 import { expect, test } from "vite-plus/test";
-import { buildDatabaseName, buildRoleName, buildCloneDatabaseName } from "../src/core/naming.ts";
+import {
+  buildDatabaseName,
+  buildRoleName,
+  buildCloneDatabaseName,
+  buildShadowDatabaseName,
+} from "../src/core/naming.ts";
 import type { WorktreeIdentity } from "../src/core/worktree.ts";
 
 function id(
@@ -89,5 +94,23 @@ test("buildCloneDatabaseName keeps mode + hash with the default pid/time suffix"
     expect(clone.length).toBeLessThanOrEqual(63);
     expect(clone.startsWith("cpg_cedar_")).toBe(true);
     expect(clone.endsWith(`${template.slice(-14)}_c_${suffix}`)).toBe(true);
+  }
+});
+
+test("shadow names preserve mode + full hash and stay distinct at the length limit", () => {
+  const short = "cpg_cedar_main_dev_abcd1234";
+  expect(buildShadowDatabaseName(short)).toBe(`${short}_shadow`);
+  const databases = ["abcd1234", "abc99999"].map((pathHash) =>
+    buildDatabaseName(
+      id({ repoSlug: "r".repeat(80), worktreeSlug: "w".repeat(80), pathHash }),
+      "dev",
+    ),
+  );
+  const shadows = databases.map(buildShadowDatabaseName);
+  expect(shadows[0]).not.toBe(shadows[1]);
+  for (const [i, shadow] of shadows.entries()) {
+    expect(shadow.length).toBeLessThanOrEqual(63);
+    expect(shadow.endsWith(`${databases[i]!.slice(-13)}_shadow`)).toBe(true);
+    expect(shadow).not.toBe(databases[i]);
   }
 });

@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { buildDatabaseUrl } from "../src/providers/autopg.ts";
+import { buildShadowDatabaseName } from "../src/core/naming.ts";
 import { writeLease, type Lease } from "../src/core/lease.ts";
 
 function makeLease(partial: Partial<Lease> & Pick<Lease, "root" | "port">): Lease {
@@ -58,7 +60,7 @@ async function withNoAcquire<T>(run: () => Promise<T>): Promise<T> {
     );
     return {
       ...actual,
-      ensureDatabase: forbidden("ensureDatabase"),
+      ensureDatabases: forbidden("ensureDatabases"),
       dropDatabasesOwnedByRole: forbidden("dropDatabasesOwnedByRole"),
     };
   });
@@ -85,6 +87,10 @@ test("attach returns the lease URL when the host listens, without acquiring", as
       await expect(attach({ root, mode: "dev" })).resolves.toEqual({
         lease,
         databaseUrl: urlFromLease(lease),
+        shadowDatabaseUrl: buildDatabaseUrl({
+          ...lease,
+          databaseName: buildShadowDatabaseName(lease.databaseName),
+        }),
       });
     });
   } finally {
